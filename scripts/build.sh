@@ -38,22 +38,27 @@ fBuildLinux()
 
     # you can get a list of predefined configs for ARM under arch/arm/configs/
     # this configures the kernel compilation parameters
-    make ARCH=arm versatile_defconfig
+    # make ARCH=arm versatile_defconfig
+    make ARCH=arm vexpress_defconfig
+
+    # menuconfig
+    # make ARCH=arm CROSS_COMPILE=arm-none-eabi- menuconfig -j ${JOBS}
 
     # this compiles the kernel, add "-j <number_of_cpus>" to it to use multiple CPUs to reduce build time
-    make ARCH=arm CROSS_COMPILE=arm-none-eabi- -j ${JOBS}
+    make ARCH=arm CROSS_COMPILE=arm-none-eabi- all -j ${JOBS}
     # self decompressing gzip image on arch/arm/boot/zImage and arch/arm/boot/Image is the decompressed image.
     # update files
     cp -f ${KERNEL_PATH}/arch/arm/boot/zImage ${LAB_PATH}
-    cp -f ${KERNEL_PATH}/arch/arm/boot/dts/versatile-pb.dtb ${LAB_PATH}
+    # cp -f ${KERNEL_PATH}/arch/arm/boot/dts/versatile-pb.dtb ${LAB_PATH}/device_tree.dtb
+    cp -f ${KERNEL_PATH}/arch/arm/boot/dts/vexpress-v2p-ca9.dtb ${LAB_PATH}/device_tree.dtb
 }
 fBuildRootfs()
 {
     fPrintHeader "Build rootfs"
     cd ${ROOTFS_PATH}
     # arm-unknown-linux-uclibcgnueabi-gcc -static -march=armv5te -mtune=xscale -Wa,-mcpu=xscale main.c -o init
-    # arm-linux-gnueabi-gcc -marm -march=armv5 -static -o init init.c
-    arm-linux-gnueabihf-gcc -marm -static -o init init.c
+    # arm-linux-gnueabi-gcc -marm -march=armv5 -O0 -static -o init init.c
+    arm-linux-gnueabihf-gcc -marm -O0 -static -o init init.c
     chmod +x init
     # echo init | cpio -o --format=newc | gzip  > initramfs
     echo init | cpio -o --format=newc  > initramfs
@@ -65,7 +70,9 @@ fRunQemu()
     cd ${LAB_PATH}
     # qemu-system-arm -M versatilepb -kernel ./zImage -nographic -append "ignore_loglevel log_buf_len=10M print_fatal_signals=1 LOGLEVEL=8 earlyprintk=vga,keep sched_debug"
     # qemu-system-arm -M versatilepb -kernel ./zImage -dtb versatile-pb.dtb -nographic -append "ignore_loglevel log_buf_len=10M print_fatal_signals=1 LOGLEVEL=8 earlyprintk=vga,keep sched_debug"
-    qemu-system-arm -M versatilepb -kernel ./zImage -dtb versatile-pb.dtb -initrd initramfs -nographic -append "ignore_loglevel log_buf_len=10M print_fatal_signals=1 LOGLEVEL=8 earlyprintk=vga,keep sched_debug" -m 128M
+    # qemu-system-arm -M versatilepb -kernel ./zImage -dtb device_tree.dtb -initrd initramfs -nographic -append "ignore_loglevel log_buf_len=10M print_fatal_signals=1 LOGLEVEL=8 earlyprintk=vga,keep sched_debug" -m 128M
+    # qemu-system-arm -M vexpress-a9 -kernel ./zImage -dtb device_tree.dtb -initrd initramfs -append "ignore_loglevel log_buf_len=10M print_fatal_signals=1 LOGLEVEL=8 earlyprintk=vga,keep sched_debug console=ttyAMA0" -m 128M
+    qemu-system-arm -M vexpress-a9 -kernel ./zImage -dtb device_tree.dtb -initrd initramfs -nographic -append "ignore_loglevel log_buf_len=10M print_fatal_signals=1 LOGLEVEL=8 earlyprintk=vga,keep sched_debug console=ttyAMA0" -m 128M
 }
 while true
 do
