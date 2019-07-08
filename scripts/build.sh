@@ -1,9 +1,26 @@
-
+#!/bin/bash
+##############################################
+## Vars
+##############################################
 export JOBS=$(nproc --all)
+export FLAG_FIRSTBUILD=false
+export SYSTEM_CC_PREFIX=arm-linux-gnueabihf-
+export BAREMETAL_CC_PREFIX=arm-none-eabi-
+##############################################
+## Alias
+##############################################
+alias make="make -j ${JOBS} "
+##############################################
+## Path
+##############################################
 export ROOT_PATH=${PWD}
 export KERNEL_PATH=${ROOT_PATH}/linux
-export LAB_PATH=${ROOT_PATH}/lab
+export BUSYBOX_PATH=${ROOT_PATH}/busybox
+export BUILD_PATH=${ROOT_PATH}/build
 export ROOTFS_PATH=${ROOT_PATH}/rootfs
+##############################################
+## Functions
+##############################################
 fPrintHeader()
 {
     local msg=${1}
@@ -15,9 +32,13 @@ fPrintHeader()
 }
 fSetupEnv()
 {
-    if [ ! -d ${LAB_PATH} ]
+    if [ ! -d ${BUILD_PATH} ]
     then
-        mkdir ${LAB_PATH}
+        mkdir ${BUILD_PATH}
+    fi
+    if [ ! -d ${BUILD_PATH}/rootfs ]
+    then
+        mkdir ${BUILD_PATH}/rootfs
     fi
 }
 fDownloadLinux()
@@ -31,6 +52,17 @@ fDownloadLinux()
         git clone https://github.com/torvalds/linux.git
     fi
 }
+fDownloadBusybox()
+{
+    cd ${ROOTFS_PATH}
+    fPrintHeader "Download Busybox"
+    if [ -d ${KERNEL_PATH} ]
+    then
+        echo "Skip Busybox download."
+    else
+        git clone https://github.com/mirror/busybox.git
+    fi
+}
 fBuildLinux()
 {
     fPrintHeader "Building Linux Kernel"
@@ -41,38 +73,56 @@ fBuildLinux()
     # make ARCH=arm versatile_defconfig
     make ARCH=arm vexpress_defconfig
 
-    # menuconfig
-    # make ARCH=arm CROSS_COMPILE=arm-none-eabi- menuconfig -j ${JOBS}
+    if [ ${FLAG_FIRSTBUILD} = true ]
+    then
+        # menuconfig
+        make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} menuconfig
+    fi
 
     # this compiles the kernel, add "-j <number_of_cpus>" to it to use multiple CPUs to reduce build time
-    make ARCH=arm CROSS_COMPILE=arm-none-eabi- all -j ${JOBS}
+    make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} all
     # self decompressing gzip image on arch/arm/boot/zImage and arch/arm/boot/Image is the decompressed image.
     # update files
-    cp -f ${KERNEL_PATH}/arch/arm/boot/zImage ${LAB_PATH}
-    # cp -f ${KERNEL_PATH}/arch/arm/boot/dts/versatile-pb.dtb ${LAB_PATH}/device_tree.dtb
-    cp -f ${KERNEL_PATH}/arch/arm/boot/dts/vexpress-v2p-ca9.dtb ${LAB_PATH}/device_tree.dtb
+    cp -f ${KERNEL_PATH}/arch/arm/boot/zImage ${BUILD_PATH}/
+    # cp -f ${KERNEL_PATH}/arch/arm/boot/dts/versatile-pb.dtb ${BUILD_PATH}/device_tree.dtb
+    cp -f ${KERNEL_PATH}/arch/arm/boot/dts/vexpress-v2p-ca9.dtb ${BUILD_PATH}/device_tree.dtb
+}
+fBuildBusybox()
+{
+    fPrintHeader "Building busybox"
+    cd ${BUSYBOX_PATH}
+    if [ ${FLAG_FIRSTBUILD} = true ]
+    then
+        make ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} defconfig
+        make ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} menuconfig
+    fi
+    make ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} install
+    cp -rf ${BUSYBOX_PATH}/_install/* ${BUILD_PATH}/rootfs/
 }
 fBuildRootfs()
 {
     fPrintHeader "Build rootfs"
-    cd ${ROOTFS_PATH}
-    # arm-unknown-linux-uclibcgnueabi-gcc -static -march=armv5te -mtune=xscale -Wa,-mcpu=xscale main.c -o init
-    # arm-linux-gnueabi-gcc -marm -march=armv5 -O0 -static -o init init.c
-    arm-linux-gnueabihf-gcc -marm -O0 -static -o init init.c
-    chmod +x init
-    # echo init | cpio -o --format=newc | gzip  > initramfs
-    echo init | cpio -o --format=newc  > initramfs
-    # cpio -o -H newc | gzip > ../versatile-initrd
-    cp -f initramfs ${LAB_PATH}
+    if false
+    then
+        cd ${ROOTFS_PATH}
+        ${SYSTEM_CC_PREFIX}gcc -marm -O0 -static -o init init.c
+        chmod +x init
+        echo init | cpio -o --format=newc | gzip  > initramfs
+        cp -f initramfs ${BUILD_PATH}/
+    else
+        fBuildBusybox
+        cd ${BUILD_PATH}/rootfs
+        cp -rf ${ROOTFS_PATH}/* ${BUILD_PATH}/rootfs
+        find . | cpio -o -H newc | gzip > ${BUILD_PATH}/initramfs
+        # cp -f initramfs ${BUILD_PATH}/
+    fi
 }
 fRunQemu()
 {
-    cd ${LAB_PATH}
-    # qemu-system-arm -M versatilepb -kernel ./zImage -nographic -append "ignore_loglevel log_buf_len=10M print_fatal_signals=1 LOGLEVEL=8 earlyprintk=vga,keep sched_debug"
-    # qemu-system-arm -M versatilepb -kernel ./zImage -dtb versatile-pb.dtb -nographic -append "ignore_loglevel log_buf_len=10M print_fatal_signals=1 LOGLEVEL=8 earlyprintk=vga,keep sched_debug"
-    # qemu-system-arm -M versatilepb -kernel ./zImage -dtb device_tree.dtb -initrd initramfs -nographic -append "ignore_loglevel log_buf_len=10M print_fatal_signals=1 LOGLEVEL=8 earlyprintk=vga,keep sched_debug" -m 128M
-    # qemu-system-arm -M vexpress-a9 -kernel ./zImage -dtb device_tree.dtb -initrd initramfs -append "ignore_loglevel log_buf_len=10M print_fatal_signals=1 LOGLEVEL=8 earlyprintk=vga,keep sched_debug console=ttyAMA0" -m 128M
-    qemu-system-arm -M vexpress-a9 -kernel ./zImage -dtb device_tree.dtb -initrd initramfs -nographic -append "ignore_loglevel log_buf_len=10M print_fatal_signals=1 LOGLEVEL=8 earlyprintk=vga,keep sched_debug console=ttyAMA0" -m 128M
+    fPrintHeader "Run Qemu"
+    cd ${BUILD_PATH}
+    # qemu-system-arm -M vexpress-a9 -kernel ./zImage -dtb device_tree.dtb -initrd initramfs -nographic -append "ignore_loglevel log_buf_len=10M print_fatal_signals=1 LOGLEVEL=8 earlyprintk=vga,keep sched_debug console=ttyAMA0 rdinit=/bin/sh" -m 128M
+    qemu-system-arm -M vexpress-a9 -kernel ./zImage -dtb device_tree.dtb -initrd initramfs -nographic -append "ignore_loglevel log_buf_len=10M print_fatal_signals=1 LOGLEVEL=8 earlyprintk=vga,keep sched_debug console=ttyAMA0 rdinit=/sbin/init" -m 128M
 }
 while true
 do
@@ -88,6 +138,7 @@ do
             fDownloadLinux
             fBuildLinux
             fBuildRootfs
+            fRunQemu
             exit 0
             ;;
         -q|--qemu)
@@ -103,5 +154,4 @@ do
             ;;
     esac
 done
-
 
