@@ -34,6 +34,23 @@ fPrintHeader()
     echo "##############################################"
     echo "##############################################"
 }
+fErrControl()
+{
+    local ret_var=$?
+    local func_name=${1}
+    local line_num=${2}
+    if [[ ${ret_var} == 0 ]]
+    then
+        return ${ret_var}
+    else
+        echo ${func_name} ${line_num}
+        exit ${ret_var}
+    fi
+}
+fHelp()
+{
+    fPrintHeader "Help"
+}
 fSetupEnv()
 {
     if [ ! -d ${BUILD_PATH} ]
@@ -53,7 +70,7 @@ fDownloadUBoot()
     then
         echo "Skip UBoot download."
     else
-        git clone https://github.com/u-boot/u-boot.git
+        git clone https://github.com/u-boot/u-boot.git; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
 }
 fDownloadLinux()
@@ -64,7 +81,7 @@ fDownloadLinux()
     then
         echo "Skip Linux kernel download."
     else
-        git clone https://github.com/torvalds/linux.git
+        git clone https://github.com/torvalds/linux.git; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
 }
 fDownloadBusybox()
@@ -75,16 +92,16 @@ fDownloadBusybox()
     then
         echo "Skip Busybox download."
     else
-        git clone https://github.com/mirror/busybox.git
+        git clone https://github.com/mirror/busybox.git; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
 }
 fBuildUBoot()
 {
     fPrintHeader "Building U-Boot"
     cd ${UBOOT_PATH}
-    make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} vexpress_ca9x4_defconfig
-    make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} -j ${JOBS}
-    cp ${UBOOT_PATH}/u-boot ${BUILD_PATH}/zImage
+    make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} vexpress_ca9x4_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+    make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} -j ${JOBS}; fErrControl ${FUNCNAME[0]} ${LINENO}
+    cp ${UBOOT_PATH}/u-boot ${BUILD_PATH}/zImage; fErrControl ${FUNCNAME[0]} ${LINENO}
 }
 fBuildLinux()
 {
@@ -96,19 +113,19 @@ fBuildLinux()
         # you can get a list of predefined configs for ARM under arch/arm/configs/
         # this configures the kernel compilation parameters
         # make ARCH=arm versatile_defconfig
-        make ARCH=arm vexpress_defconfig
+        make ARCH=arm vexpress_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
 
         # menuconfig
-        make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} menuconfig
+        make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} menuconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
 
     # this compiles the kernel, add "-j <number_of_cpus>" to it to use multiple CPUs to reduce build time
-    make -j ${JOBS} ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} all
+    make -j ${JOBS} ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} all; fErrControl ${FUNCNAME[0]} ${LINENO}
     # self decompressing gzip image on arch/arm/boot/zImage and arch/arm/boot/Image is the decompressed image.
     # update files
-    cp -f ${KERNEL_PATH}/arch/arm/boot/zImage ${BUILD_PATH}/
+    cp -f ${KERNEL_PATH}/arch/arm/boot/zImage ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
     # cp -f ${KERNEL_PATH}/arch/arm/boot/dts/versatile-pb.dtb ${BUILD_PATH}/device_tree.dtb
-    cp -f ${KERNEL_PATH}/arch/arm/boot/dts/vexpress-v2p-ca9.dtb ${BUILD_PATH}/device_tree.dtb
+    cp -f ${KERNEL_PATH}/arch/arm/boot/dts/vexpress-v2p-ca9.dtb ${BUILD_PATH}/device_tree.dtb; fErrControl ${FUNCNAME[0]} ${LINENO}
 }
 fBuildBusybox()
 {
@@ -116,11 +133,11 @@ fBuildBusybox()
     cd ${BUSYBOX_PATH}
     if [ ${FLAG_FIRSTBUILD} = true ]
     then
-        make ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} defconfig
-        make ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} menuconfig
+        make ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+        make ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} menuconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
-    make -j ${JOBS} ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} install
-    cp -rf ${BUSYBOX_PATH}/_install/* ${BUILD_PATH}/rootfs/
+    make -j ${JOBS} ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} install; fErrControl ${FUNCNAME[0]} ${LINENO}
+    cp -rf ${BUSYBOX_PATH}/_install/* ${BUILD_PATH}/rootfs/; fErrControl ${FUNCNAME[0]} ${LINENO}
 }
 fBuildRootfs()
 {
@@ -128,15 +145,15 @@ fBuildRootfs()
     if false
     then
         cd ${ROOTFS_PATH}
-        ${SYSTEM_CC_PREFIX}gcc -marm -O0 -static -o init init.c
-        chmod +x init
-        echo init | cpio -o --format=newc | gzip  > initramfs
-        cp -f initramfs ${BUILD_PATH}/
+        ${SYSTEM_CC_PREFIX}gcc -marm -O0 -static -o init init.c; fErrControl ${FUNCNAME[0]} ${LINENO}
+        chmod +x init; fErrControl ${FUNCNAME[0]} ${LINENO}
+        echo init | cpio -o --format=newc | gzip  > initramfs; fErrControl ${FUNCNAME[0]} ${LINENO}
+        cp -f initramfs ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
     else
         fBuildBusybox
         cd ${BUILD_PATH}/rootfs
-        cp -rf ${ROOTFS_PATH}/* ${BUILD_PATH}/rootfs
-        find . | cpio -o -H newc | gzip > ${BUILD_PATH}/initramfs
+        cp -rf ${ROOTFS_PATH}/* ${BUILD_PATH}/rootfs; fErrControl ${FUNCNAME[0]} ${LINENO}
+        find . | cpio -o -H newc | gzip > ${BUILD_PATH}/initramfs; fErrControl ${FUNCNAME[0]} ${LINENO}
         # cp -f initramfs ${BUILD_PATH}/
     fi
 }
@@ -147,9 +164,9 @@ fRunEmulation()
     if [ ${FLAG_GRAPHIC} = true ]
     then
         # graphic
-        qemu-system-arm -M vexpress-a9 -kernel ./zImage -dtb device_tree.dtb -initrd initramfs -append "ignore_loglevel log_buf_len=10M print_fatal_signals=1 LOGLEVEL=8 earlyprintk=vga,keep sched_debug rdinit=/sbin/init" -m 128M
+        qemu-system-arm -M vexpress-a9 -kernel ./zImage -dtb device_tree.dtb -initrd initramfs -append "ignore_loglevel log_buf_len=10M print_fatal_signals=1 LOGLEVEL=8 earlyprintk=vga,keep sched_debug rdinit=/sbin/init" -m 128M; fErrControl ${FUNCNAME[0]} ${LINENO}
     else
-        qemu-system-arm -M vexpress-a9 -kernel ./zImage -dtb device_tree.dtb -initrd initramfs -nographic -append "ignore_loglevel log_buf_len=10M print_fatal_signals=1 LOGLEVEL=8 earlyprintk=vga,keep sched_debug console=ttyAMA0 rdinit=/sbin/init" -m 128M
+        qemu-system-arm -M vexpress-a9 -kernel ./zImage -dtb device_tree.dtb -initrd initramfs -nographic -append "ignore_loglevel log_buf_len=10M print_fatal_signals=1 LOGLEVEL=8 earlyprintk=vga,keep sched_debug console=ttyAMA0 rdinit=/sbin/init" -m 128M; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
 
 }
@@ -176,7 +193,7 @@ do
             shift 1
             ;;
         -h|--help)
-            echo Help function
+            fHelp
             exit 0
             ;;
         *)
