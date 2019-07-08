@@ -7,10 +7,17 @@ export FLAG_FIRSTBUILD=false
 export FLAG_GRAPHIC=false
 export SYSTEM_CC_PREFIX=arm-linux-gnueabihf-
 export BAREMETAL_CC_PREFIX=arm-none-eabi-
+
+export OPTION_BUILD_ALL=false
+export OPTION_BUILD_KERNEL=false
+export OPTION_BUILD_ROOTFS=false
+export OPTION_BUILD_UBOOT=false
+export OPTION_RUN_EMULATION=false
 ##############################################
 ## Path
 ##############################################
 export ROOT_PATH=${PWD}
+export UBOOT_PATH=${ROOT_PATH}/u-boot
 export KERNEL_PATH=${ROOT_PATH}/linux
 export BUSYBOX_PATH=${ROOT_PATH}/busybox
 export BUILD_PATH=${ROOT_PATH}/build
@@ -38,6 +45,17 @@ fSetupEnv()
         mkdir ${BUILD_PATH}/rootfs
     fi
 }
+fDownloadUBoot()
+{
+    cd ${ROOT_PATH}
+    fPrintHeader "Download UBoot srouce code"
+    if [ -d ${UBOOT_PATH} ]
+    then
+        echo "Skip UBoot download."
+    else
+        git clone https://github.com/u-boot/u-boot.git
+    fi
+}
 fDownloadLinux()
 {
     cd ${ROOT_PATH}
@@ -59,6 +77,14 @@ fDownloadBusybox()
     else
         git clone https://github.com/mirror/busybox.git
     fi
+}
+fBuildUBoot()
+{
+    fPrintHeader "Building U-Boot"
+    cd ${UBOOT_PATH}
+    make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} vexpress_ca9x4_defconfig
+    make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} -j ${JOBS}
+    cp ${UBOOT_PATH}/u-boot ${BUILD_PATH}/zImage
 }
 fBuildLinux()
 {
@@ -114,7 +140,7 @@ fBuildRootfs()
         # cp -f initramfs ${BUILD_PATH}/
     fi
 }
-fRunQemu()
+fRunEmulation()
 {
     fPrintHeader "Run Qemu"
     cd ${BUILD_PATH}
@@ -131,24 +157,23 @@ while true
 do
     case $1 in
         -r|--rebuild)
-            fBuildLinux
-            fBuildRootfs
-            fRunQemu
-            exit 0
+            OPTION_BUILD_KERNEL=true
+            OPTION_BUILD_ROOTFS=true
+            OPTION_RUN_EMULATION=true
+            shift 1
             ;;
         -a|--all)
             FLAG_FIRSTBUILD=true
-            fSetupEnv
-            fDownloadLinux
-            fDownloadBusybox
-            fBuildLinux
-            fBuildRootfs
-            fRunQemu
-            exit 0
+            OPTION_BUILD_ALL=true
+            shift 1
+            ;;
+        -u|--uboot)
+            OPTION_BUILD_UBOOT=true
+            shift 1
             ;;
         -q|--qemu)
-            fRunQemu
-            exit 0
+            OPTION_RUN_EMULATION=true
+            shift 1
             ;;
         -h|--help)
             echo Help function
@@ -159,4 +184,30 @@ do
             ;;
     esac
 done
-
+fSetupEnv
+if [ ${OPTION_BUILD_ALL} = true ]
+then
+    fDownloadUBoot
+    fDownloadLinux
+    fDownloadBusybox
+    fBuildLinux
+    fBuildRootfs
+    fRunEmulation
+    exit 0
+fi
+if [ ${OPTION_BUILD_KERNEL} = true ]
+then
+    fBuildLinux
+fi
+if [ ${OPTION_BUILD_ROOTFS} = true ]
+then
+    fBuildRootfs
+fi
+if [ ${OPTION_BUILD_UBOOT} = true ]
+then
+    fBuildUBoot
+fi
+if [ ${OPTION_RUN_EMULATION} = true ]
+then
+    fRunEmulation
+fi
