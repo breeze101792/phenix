@@ -1,5 +1,6 @@
 #!/bin/sh
-mkdir /proc /sys
-mount -t proc proc /proc
-mount -t sysfs sysfs /sys
+mkdir /proc /sys /run /tmp
+mount -vt proc proc /proc
+mount -vt sysfs sysfs /sys
+mount -vt tmpfs tmpfs /run
 mdev -s
