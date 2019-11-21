@@ -4,9 +4,27 @@
 ##############################################
 export JOBS=$(nproc --all)
 export FLAG_GRAPHIC=false
-export SYSTEM_CC_PREFIX=arm-linux-gnueabihf-
-export BAREMETAL_CC_PREFIX=arm-none-eabi-
 
+
+##############################################
+## Options
+##############################################
+# arm 64
+# export PATH=/mnt/storage/workspace/tools/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu/bin:$PATH
+export VARS_KERNEL_ARCH=arm64
+export VARS_KERNEL_CONFIG=defconfig
+export VARS_QEMU_ARCH=arm64
+export SYSTEM_CC_PREFIX=aarch64-linux-gnu-
+export BAREMETAL_CC_PREFIX=aarch64-linux-gnu-
+# arm
+# export VARS_KERNEL_ARCH=arm
+# export VARS_KERNEL_CONFIG=vexpress_defconfig
+# export VARS_QEMU_ARCH=arm
+# export SYSTEM_CC_PREFIX=arm-linux-gnueabihf-
+# export BAREMETAL_CC_PREFIX=arm-none-eabi-
+##############################################
+## Options
+##############################################
 export OPTION_BUILD_ALL=false
 export OPTION_BUILD_KERNEL=false
 export OPTION_BUILD_ROOTFS=false
@@ -14,6 +32,7 @@ export OPTION_BUILD_UBOOT=false
 export OPTION_RUN_EMULATION=false
 export OPTION_RUN_GDB=false
 export OPTION_ENABLE_MENUCONFIG=false
+export OPTION_ARCH=arm
 ##############################################
 ## Path
 ##############################################
@@ -68,6 +87,27 @@ fSetupEnv()
         qemu-img create -f qcow2 disk.img 4G
     fi
 }
+fSelectArch()
+{
+    local arch=$1
+    case ${arch} in
+        arm)
+            VARS_KERNEL_ARCH=arm
+            VARS_QEMU_ARCH=arm
+            VARS_KERNEL_CONFIG=vexpress_defconfig
+            SYSTEM_CC_PREFIX=arm-linux-gnueabihf-
+            BAREMETAL_CC_PREFIX=arm-none-eabi-
+            ;;
+        arm64)
+            export PATH=/mnt/storage/workspace/tools/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu/bin:$PATH
+            VARS_KERNEL_ARCH=arm64
+            VARS_QEMU_ARCH=arm64
+            VARS_KERNEL_CONFIG=defconfig
+            SYSTEM_CC_PREFIX=aarch64-linux-gnu-
+            BAREMETAL_CC_PREFIX=aarch64-linux-gnu-
+            ;;
+    esac
+}
 fDownloadUBoot()
 {
     cd ${ROOT_PATH}
@@ -119,17 +159,19 @@ fBuildLinux()
         # you can get a list of predefined configs for ARM under arch/arm/configs/
         # this configures the kernel compilation parameters
         # make ARCH=arm versatile_defconfig
-        make ARCH=arm vexpress_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+        make ARCH=${VARS_KERNEL_ARCH} ${VARS_KERNEL_CONFIG}; fErrControl ${FUNCNAME[0]} ${LINENO}
 
         # menuconfig
-        make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} menuconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+        make ARCH=${VARS_KERNEL_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} menuconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
 
     # this compiles the kernel, add "-j <number_of_cpus>" to it to use multiple CPUs to reduce build time
-    make -j ${JOBS} ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} all; fErrControl ${FUNCNAME[0]} ${LINENO}
+    make -j ${JOBS} ARCH=${VARS_KERNEL_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} all; fErrControl ${FUNCNAME[0]} ${LINENO}
     # self decompressing gzip image on arch/arm/boot/zImage and arch/arm/boot/Image is the decompressed image.
     # update files
+    cp -f ${KERNEL_PATH}/arch/arm/boot/Image ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
     cp -f ${KERNEL_PATH}/arch/arm/boot/zImage ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
+    # cp -f ${KERNEL_PATH}/arch/arm/boot/uImage ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
     # cp -f ${KERNEL_PATH}/arch/arm/boot/dts/versatile-pb.dtb ${BUILD_PATH}/device_tree.dtb
     cp -f ${KERNEL_PATH}/arch/arm/boot/dts/vexpress-v2p-ca9.dtb ${BUILD_PATH}/device_tree.dtb; fErrControl ${FUNCNAME[0]} ${LINENO}
 }
@@ -142,6 +184,8 @@ fBuildBusybox()
         make ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
         make ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} menuconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
+    # FIXME 
+    echo "Please do Busybox Settings –> Build Options"
     make -j ${JOBS} ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} install; fErrControl ${FUNCNAME[0]} ${LINENO}
     cp -rf ${BUSYBOX_PATH}/_install/* ${BUILD_PATH}/rootfs/; fErrControl ${FUNCNAME[0]} ${LINENO}
 }
@@ -175,14 +219,16 @@ fBuildRootfs_struct()
 fBuildRootfs()
 {
     fPrintHeader "Build rootfs"
-    if false
+    local rootfs_type="busybox"
+    if [ "${rootfs_type}" = "tiny" ]
     then
-        cd ${ROOTFS_PATH}
+        cd ${ROOTFS_PATH}/init
         ${SYSTEM_CC_PREFIX}gcc -marm -O0 -static -o init init.c; fErrControl ${FUNCNAME[0]} ${LINENO}
         chmod +x init; fErrControl ${FUNCNAME[0]} ${LINENO}
         echo init | cpio -o --format=newc | gzip  > initramfs; fErrControl ${FUNCNAME[0]} ${LINENO}
         cp -f initramfs ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
-    else
+    elif [ "${rootfs_type}" = "busybox" ]
+    then
         fBuildRootfs_struct
         fBuildBusybox
         cd ${BUILD_PATH}/rootfs
@@ -213,40 +259,63 @@ fRunGDB()
 }
 fRunEmulation()
 {
-    fPrintHeader "Run Qemu"
-    cd ${BUILD_PATH}
-    local kernel_command="ignore_loglevel log_buf_len=10M print_fatal_signals=1 LOGLEVEL=8 earlyprintk=vga,keep sched_debug console=ttyAMA0 "
-    kernel_command+="rdinit=/sbin/init"
-    # kernel_command+="rdinit=/bin/sh"
-    local qemu_cmd=(qemu-system-arm -M vexpress-a9 -kernel ./zImage -dtb device_tree.dtb -nographic -m 128M -initrd initramfs )
-    qemu_cmd+=(-s)
-    qemu_cmd+=(-hda disk.img)
-    # qemu_cmd+=(-device e1000,netdev=eth0)
-    # qemu_cmd+=(-s -S)
-    qemu_cmd=("${qemu_cmd[@]}" -append "${kernel_command}")
-    "${qemu_cmd[@]}"
-    # if [ ${FLAG_GRAPHIC} = true ]
-    # then
-    #     # graphic
-    #     qemu-system-arm -M vexpress-a9 -kernel ./zImage -dtb device_tree.dtb -initrd initramfs -append "ignore_loglevel log_buf_len=10M print_fatal_signals=1 LOGLEVEL=8 earlyprintk=vga,keep sched_debug rdinit=/sbin/init" -m 128M; fErrControl ${FUNCNAME[0]} ${LINENO}
-    # else
-    #     qemu-system-arm -M vexpress-a9 -kernel ./zImage -dtb device_tree.dtb -initrd initramfs -nographic -append "ignore_loglevel log_buf_len=10M print_fatal_signals=1 LOGLEVEL=8 earlyprintk=vga,keep sched_debug console=ttyAMA0 rdinit=/sbin/init" -m 128M; fErrControl ${FUNCNAME[0]} ${LINENO}
-    # fi
+    if [ "${VARS_QEMU_ARCH}" = "arm" ]
+    then
+        fPrintHeader "Run Qemu"
+        cd ${BUILD_PATH}
+        local kernel_command="ignore_loglevel log_buf_len=10M print_fatal_signals=1 LOGLEVEL=8 earlyprintk=vga,keep sched_debug console=ttyAMA0 "
+        kernel_command+="rdinit=/sbin/init"
 
+        local qemu_cmd=(qemu-system-arm )
+        qemu_cmd+=(-machine vexpress-a9)
+        qemu_cmd+=(-kernel ./zImage)
+        qemu_cmd+=(-dtb device_tree.dtb)
+        qemu_cmd+=(-nographic)
+        qemu_cmd+=(-m 128M)
+        qemu_cmd+=(-initrd initramfs)
+
+        qemu_cmd+=(-s)
+        qemu_cmd+=(-hda disk.img)
+        # qemu_cmd+=(-device e1000,netdev=eth0)
+        # qemu_cmd+=(-s -S)
+    elif [ "${VARS_QEMU_ARCH}" = "arm64" ]
+    then
+        fPrintHeader "Run Qemu"
+        cd ${BUILD_PATH}
+        local kernel_command="console=ttyAMA0 root=/dev/vda oops=panic panic_on_warn=1 panic=-1 ftrace_dump_on_oops=orig_cpu debug earlyprintk=serial slub_debug=UZ "
+        kernel_command+="rdinit=/sbin/init"
+
+        local qemu_cmd=(qemu-system-aarch64)
+        qemu_cmd+=(-machine virt)
+        qemu_cmd+=(-cpu cortex-a57)
+        qemu_cmd+=(-nographic)
+        qemu_cmd+=(-smp 1)
+        qemu_cmd+=(-initrd ./initramfs)
+        qemu_cmd+=(-kernel ../linux/arch/arm64/boot/Image)
+        qemu_cmd+=(-m 2048)
+        qemu_cmd+=(-net user,hostfwd=tcp::10023-:22 -net nic)
+
+    fi
+    echo "${qemu_cmd[@]} -append \"${kernel_command}\""
+    eval "${qemu_cmd[@]} -append \"${kernel_command}\""
 }
 while true
 do
     case $1 in
+        --arch)
+            OPTION_ARCH=$2
+            shift 2
+            ;;
         -m|--menuconfig)
             OPTION_ENABLE_MENUCONFIG=true
             shift 1
             ;;
-        # -r|--rebuild)
-        #     OPTION_BUILD_KERNEL=true
-        #     OPTION_BUILD_ROOTFS=true
-        #     OPTION_RUN_EMULATION=true
-        #     shift 1
-        #     ;;
+        --rebuild)
+            OPTION_BUILD_KERNEL=true
+            OPTION_BUILD_ROOTFS=true
+            OPTION_RUN_EMULATION=true
+            shift 1
+            ;;
         -a|--all)
             OPTION_ENABLE_MENUCONFIG=true
             OPTION_BUILD_ALL=true
@@ -283,6 +352,7 @@ do
     esac
 done
 fSetupEnv
+fSelectArch ${OPTION_ARCH}
 if [ ${OPTION_BUILD_ALL} = true ]
 then
     fDownloadUBoot
