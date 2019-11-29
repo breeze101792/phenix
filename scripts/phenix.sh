@@ -16,12 +16,14 @@ export VARS_KERNEL_CONFIG=defconfig
 export VARS_QEMU_ARCH=arm64
 export SYSTEM_CC_PREFIX=aarch64-linux-gnu-
 export BAREMETAL_CC_PREFIX=aarch64-linux-gnu-
+export PATH_TOOLCHAIN_LIBC=/mnt/storage/workspace/tools/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu/aarch64-linux-gnu/libc
 # arm
 # export VARS_KERNEL_ARCH=arm
 # export VARS_KERNEL_CONFIG=vexpress_defconfig
 # export VARS_QEMU_ARCH=arm
 # export SYSTEM_CC_PREFIX=arm-linux-gnueabihf-
 # export BAREMETAL_CC_PREFIX=arm-none-eabi-
+# export PATH_TOOLCHAIN_LIBC=""
 ##############################################
 ## Options
 ##############################################
@@ -41,7 +43,7 @@ export UBOOT_PATH=${ROOT_PATH}/u-boot
 export KERNEL_PATH=${ROOT_PATH}/linux
 export BUSYBOX_PATH=${ROOT_PATH}/busybox
 export BUILD_PATH=${ROOT_PATH}/build
-export ROOTFS_PATH=${ROOT_PATH}/rootfs
+export ROOTFS_PATH=${BUILD_PATH}/rootfs
 ##############################################
 ## Functions
 ##############################################
@@ -167,6 +169,7 @@ fBuildLinux()
 
     # this compiles the kernel, add "-j <number_of_cpus>" to it to use multiple CPUs to reduce build time
     make -j ${JOBS} ARCH=${VARS_KERNEL_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} all; fErrControl ${FUNCNAME[0]} ${LINENO}
+    make modules_install INSTALL_MOD_PATH=${ROOTFS_PATH} ARCH=${VARS_KERNEL_ARCH}
     # self decompressing gzip image on arch/arm/boot/zImage and arch/arm/boot/Image is the decompressed image.
     # update files
     cp -f ${KERNEL_PATH}/arch/arm/boot/Image ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
@@ -185,23 +188,22 @@ fBuildBusybox()
         make ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} menuconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
     # FIXME 
-    echo "Please do Busybox Settings –> Build Options"
+    echo "Please do Busybox Settings –> Build Options. If you don't have libc library"
     make -j ${JOBS} ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} install; fErrControl ${FUNCNAME[0]} ${LINENO}
     cp -rf ${BUSYBOX_PATH}/_install/* ${BUILD_PATH}/rootfs/; fErrControl ${FUNCNAME[0]} ${LINENO}
 }
 fBuildRootfs_struct()
 {
     fPrintHeader "Create root structure"
-    local root_fs=${BUILD_PATH}/rootfs
-    mkdir -pv ${root_fs}/{bin,boot,etc/{opt,sysconfig},home,lib/firmware,mnt,opt}
-    mkdir -pv ${root_fs}/{media/{floppy,cdrom},sbin,srv,var}
-    install -dv -m 0750 ${root_fs}/root
-    install -dv -m 1777 ${root_fs}/tmp /var/tmp
-    mkdir -pv ${root_fs}/usr/{,local/}{bin,include,lib,sbin,src}
-    mkdir -pv ${root_fs}/usr/{,local/}share/{color,dict,doc,info,locale,man}
-    mkdir -v  ${root_fs}/usr/{,local/}share/{misc,terminfo,zoneinfo}
-    mkdir -v  ${root_fs}/usr/libexec
-    mkdir -pv ${root_fs}/usr/{,local/}share/man/man{1..8}
+    mkdir -pv ${ROOTFS_PATH}/{bin,boot,etc/{opt,sysconfig},home,lib/firmware,mnt,opt}
+    mkdir -pv ${ROOTFS_PATH}/{media/{floppy,cdrom},sbin,srv,var}
+    install -dv -m 0750 ${ROOTFS_PATH}/root
+    install -dv -m 1777 ${ROOTFS_PATH}/tmp /var/tmp
+    mkdir -pv ${ROOTFS_PATH}/usr/{,local/}{bin,include,lib,sbin,src}
+    mkdir -pv ${ROOTFS_PATH}/usr/{,local/}share/{color,dict,doc,info,locale,man}
+    mkdir -v  ${ROOTFS_PATH}/usr/{,local/}share/{misc,terminfo,zoneinfo}
+    mkdir -v  ${ROOTFS_PATH}/usr/libexec
+    mkdir -pv ${ROOTFS_PATH}/usr/{,local/}share/man/man{1..8}
 
     # case $(uname -m) in
     #  x86_64) ln -sv lib /lib64
@@ -209,12 +211,19 @@ fBuildRootfs_struct()
     #          ln -sv lib /usr/local/lib64 ;;
     # esac
 
-    mkdir -v ${root_fs}/var/{log,mail,spool}
-    ln -sv /run ${root_fs}/var/run
-    ln -sv /run/lock ${root_fs}/var/lock
-    mkdir -pv ${root_fs}/var/{opt,cache,lib/{color,misc,locate},local}
+    mkdir -v ${ROOTFS_PATH}/var/{log,mail,spool}
+    ln -sv /run ${ROOTFS_PATH}/var/run
+    ln -sv /run/lock ${ROOTFS_PATH}/var/lock
+    mkdir -pv ${ROOTFS_PATH}/var/{opt,cache,lib/{color,misc,locate},local}
 
     touch /var/log/{btmp,lastlog,wtmp}
+}
+fBuildRootfs_libc()
+{
+    if [ "${PATH_TOOLCHAIN_LIBC}" != "" ] && [ -d "${PATH_TOOLCHAIN_LIBC}" ]
+    then
+        cp -rf ${PATH_TOOLCHAIN_LIBC}/* ${ROOTFS_PATH}; fErrControl ${FUNCNAME[0]} ${LINENO}
+    fi
 }
 fBuildRootfs()
 {
@@ -222,7 +231,7 @@ fBuildRootfs()
     local rootfs_type="busybox"
     if [ "${rootfs_type}" = "tiny" ]
     then
-        cd ${ROOTFS_PATH}/init
+        cd ${ROOT_PATH}/init
         ${SYSTEM_CC_PREFIX}gcc -marm -O0 -static -o init init.c; fErrControl ${FUNCNAME[0]} ${LINENO}
         chmod +x init; fErrControl ${FUNCNAME[0]} ${LINENO}
         echo init | cpio -o --format=newc | gzip  > initramfs; fErrControl ${FUNCNAME[0]} ${LINENO}
@@ -231,9 +240,11 @@ fBuildRootfs()
     then
         fBuildRootfs_struct
         fBuildBusybox
-        cd ${BUILD_PATH}/rootfs
-        cp -rf ${ROOTFS_PATH}/* ${BUILD_PATH}/rootfs; fErrControl ${FUNCNAME[0]} ${LINENO}
-        find . | cpio -o -H newc | gzip > ${BUILD_PATH}/initramfs; fErrControl ${FUNCNAME[0]} ${LINENO}
+        fBuildRootfs_libc
+        cd ${ROOTFS_PATH}
+        cp -rf ${ROOT_PATH}/rootfs/* ${ROOTFS_PATH}; fErrControl ${FUNCNAME[0]} ${LINENO}
+        find . | fakeroot cpio -o -H newc | gzip > ${BUILD_PATH}/initramfs; fErrControl ${FUNCNAME[0]} ${LINENO}
+        # fakeroot "find . | cpio -o -H newc | gzip > ${BUILD_PATH}/initramfs"; fErrControl ${FUNCNAME[0]} ${LINENO}
         # cp -f initramfs ${BUILD_PATH}/
     fi
 }
@@ -347,7 +358,7 @@ do
             exit 0
             ;;
         *)
-            break;
+            break
             ;;
     esac
 done
@@ -363,13 +374,13 @@ then
     fRunEmulation
     exit 0
 fi
-if [ ${OPTION_BUILD_KERNEL} = true ]
-then
-    fBuildLinux
-fi
 if [ ${OPTION_BUILD_UBOOT} = true ]
 then
     fBuildUBoot
+fi
+if [ ${OPTION_BUILD_KERNEL} = true ]
+then
+    fBuildLinux
 fi
 if [ ${OPTION_BUILD_ROOTFS} = true ]
 then

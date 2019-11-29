@@ -1,6 +1,7 @@
 #!/bin/sh
-mkdir /proc /sys /run /tmp
+mkdir /proc /sys /run
 mount -vt proc proc /proc
 mount -vt sysfs sysfs /sys
 mount -vt tmpfs tmpfs /run
 mdev -s
+printf "Welcome to phenix project"
