@@ -4,19 +4,26 @@
 ##############################################
 export JOBS=$(nproc --all)
 export FLAG_GRAPHIC=false
-
+export BUILD_PREFIX=""
 
 ##############################################
 ## Options
 ##############################################
+# Default
+export VARS_KERNEL_ARCH=""
+export VARS_KERNEL_CONFIG=""
+export VARS_QEMU_ARCH=""
+export SYSTEM_CC_PREFIX=""
+export BAREMETAL_CC_PREFIX=""
+export PATH_TOOLCHAIN_LIBC=""
 # arm 64
 # export PATH=/mnt/storage/workspace/tools/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu/bin:$PATH
-export VARS_KERNEL_ARCH=arm64
-export VARS_KERNEL_CONFIG=defconfig
-export VARS_QEMU_ARCH=arm64
-export SYSTEM_CC_PREFIX=aarch64-linux-gnu-
-export BAREMETAL_CC_PREFIX=aarch64-linux-gnu-
-export PATH_TOOLCHAIN_LIBC=/mnt/storage/workspace/tools/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu/aarch64-linux-gnu/libc
+# export VARS_KERNEL_ARCH=arm64
+# export VARS_KERNEL_CONFIG=defconfig
+# export VARS_QEMU_ARCH=arm64
+# export SYSTEM_CC_PREFIX=aarch64-linux-gnu-
+# export BAREMETAL_CC_PREFIX=aarch64-linux-gnu-
+# export PATH_TOOLCHAIN_LIBC=/mnt/storage/workspace/tools/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu/aarch64-linux-gnu/libc
 # arm
 # export VARS_KERNEL_ARCH=arm
 # export VARS_KERNEL_CONFIG=vexpress_defconfig
@@ -34,7 +41,7 @@ export OPTION_BUILD_UBOOT=false
 export OPTION_RUN_EMULATION=false
 export OPTION_RUN_GDB=false
 export OPTION_ENABLE_MENUCONFIG=false
-export OPTION_ARCH=arm
+export OPTION_ARCH=arm64
 ##############################################
 ## Path
 ##############################################
@@ -72,6 +79,9 @@ fErrControl()
 fHelp()
 {
     fPrintHeader "Help"
+    echo "Example:"
+    echo "run arm64: phenix.sh -a"
+    echo "run arm: phenix.sh -a --arch=arm"
 }
 fSetupEnv()
 {
@@ -94,6 +104,7 @@ fSelectArch()
     local arch=$1
     case ${arch} in
         arm)
+            echo "ARM 32"
             VARS_KERNEL_ARCH=arm
             VARS_QEMU_ARCH=arm
             VARS_KERNEL_CONFIG=vexpress_defconfig
@@ -101,6 +112,7 @@ fSelectArch()
             BAREMETAL_CC_PREFIX=arm-none-eabi-
             ;;
         arm64)
+            echo "ARM 64"
             export PATH=/mnt/storage/workspace/tools/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu/bin:$PATH
             VARS_KERNEL_ARCH=arm64
             VARS_QEMU_ARCH=arm64
@@ -148,7 +160,7 @@ fBuildUBoot()
     fPrintHeader "Building U-Boot"
     cd ${UBOOT_PATH}
     make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} vexpress_ca9x4_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
-    make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} -j ${JOBS}; fErrControl ${FUNCNAME[0]} ${LINENO}
+    ${BUILD_PREFIX} make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} -j ${JOBS}; fErrControl ${FUNCNAME[0]} ${LINENO}
     cp ${UBOOT_PATH}/u-boot ${BUILD_PATH}/zImage; fErrControl ${FUNCNAME[0]} ${LINENO}
 }
 fBuildLinux()
@@ -168,8 +180,8 @@ fBuildLinux()
     fi
 
     # this compiles the kernel, add "-j <number_of_cpus>" to it to use multiple CPUs to reduce build time
-    make -j ${JOBS} ARCH=${VARS_KERNEL_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} all; fErrControl ${FUNCNAME[0]} ${LINENO}
-    make modules_install INSTALL_MOD_PATH=${ROOTFS_PATH} ARCH=${VARS_KERNEL_ARCH}
+    ${BUILD_PREFIX} make -j ${JOBS} ARCH=${VARS_KERNEL_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} all; fErrControl ${FUNCNAME[0]} ${LINENO}
+    ${BUILD_PREFIX} make modules_install INSTALL_MOD_PATH=${ROOTFS_PATH} ARCH=${VARS_KERNEL_ARCH}
     # self decompressing gzip image on arch/arm/boot/zImage and arch/arm/boot/Image is the decompressed image.
     # update files
     cp -f ${KERNEL_PATH}/arch/arm/boot/Image ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
@@ -185,11 +197,17 @@ fBuildBusybox()
     if [ ${OPTION_ENABLE_MENUCONFIG} = true ]
     then
         make ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+        # patch for static library
+        if [ "$VARS_QEMU_ARCH" = "arm" ]
+        then
+            echo "Patch for ARM"
+            sed -i "s/# CONFIG_STATIC is not set/CONFIG_STATIC=y/g" .config
+        fi
         make ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} menuconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
     # FIXME 
     echo "Please do Busybox Settings –> Build Options. If you don't have libc library"
-    make -j ${JOBS} ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} install; fErrControl ${FUNCNAME[0]} ${LINENO}
+    ${BUILD_PREFIX} make -j ${JOBS} ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} install; fErrControl ${FUNCNAME[0]} ${LINENO}
     cp -rf ${BUSYBOX_PATH}/_install/* ${BUILD_PATH}/rootfs/; fErrControl ${FUNCNAME[0]} ${LINENO}
 }
 fBuildRootfs_struct()
@@ -272,7 +290,7 @@ fRunEmulation()
 {
     if [ "${VARS_QEMU_ARCH}" = "arm" ]
     then
-        fPrintHeader "Run Qemu"
+        fPrintHeader "Run Qemu arm"
         cd ${BUILD_PATH}
         local kernel_command="ignore_loglevel log_buf_len=10M print_fatal_signals=1 LOGLEVEL=8 earlyprintk=vga,keep sched_debug console=ttyAMA0 "
         kernel_command+="rdinit=/sbin/init"
@@ -291,7 +309,7 @@ fRunEmulation()
         # qemu_cmd+=(-s -S)
     elif [ "${VARS_QEMU_ARCH}" = "arm64" ]
     then
-        fPrintHeader "Run Qemu"
+        fPrintHeader "Run Qemu arm64"
         cd ${BUILD_PATH}
         local kernel_command="console=ttyAMA0 root=/dev/vda oops=panic panic_on_warn=1 panic=-1 ftrace_dump_on_oops=orig_cpu debug earlyprintk=serial slub_debug=UZ "
         kernel_command+="rdinit=/sbin/init"
@@ -351,6 +369,14 @@ do
         -d|--debug)
             OPTION_RUN_GDB=true
             DEBUG_TARGET=$2
+            shift 2
+            ;;
+        --job)
+            JOBS=$2
+            shift 2
+            ;;
+        --build-prefix)
+            BUILD_PREFIX=$2
             shift 2
             ;;
         -h|--help)
