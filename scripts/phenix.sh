@@ -10,24 +10,21 @@ export BUILD_PREFIX=""
 ## Options
 ##############################################
 # Default
-export VARS_KERNEL_ARCH=""
+export VARS_ARCH=""
 export VARS_KERNEL_CONFIG=""
-export VARS_QEMU_ARCH=""
 export SYSTEM_CC_PREFIX=""
 export BAREMETAL_CC_PREFIX=""
 export PATH_TOOLCHAIN_LIBC=""
 # arm 64
 # export PATH=/mnt/storage/workspace/tools/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu/bin:$PATH
-# export VARS_KERNEL_ARCH=arm64
+# export VARS_ARCH=arm64
 # export VARS_KERNEL_CONFIG=defconfig
-# export VARS_QEMU_ARCH=arm64
 # export SYSTEM_CC_PREFIX=aarch64-linux-gnu-
 # export BAREMETAL_CC_PREFIX=aarch64-linux-gnu-
 # export PATH_TOOLCHAIN_LIBC=/mnt/storage/workspace/tools/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu/aarch64-linux-gnu/libc
 # arm
-# export VARS_KERNEL_ARCH=arm
+# export VARS_ARCH=arm
 # export VARS_KERNEL_CONFIG=vexpress_defconfig
-# export VARS_QEMU_ARCH=arm
 # export SYSTEM_CC_PREFIX=arm-linux-gnueabihf-
 # export BAREMETAL_CC_PREFIX=arm-none-eabi-
 # export PATH_TOOLCHAIN_LIBC=""
@@ -105,8 +102,7 @@ fSelectArch()
     case ${arch} in
         arm)
             echo "ARM 32"
-            VARS_KERNEL_ARCH=arm
-            VARS_QEMU_ARCH=arm
+            VARS_ARCH=arm
             VARS_KERNEL_CONFIG=vexpress_defconfig
             SYSTEM_CC_PREFIX=arm-linux-gnueabihf-
             BAREMETAL_CC_PREFIX=arm-none-eabi-
@@ -114,8 +110,7 @@ fSelectArch()
         arm64)
             echo "ARM 64"
             export PATH=/mnt/storage/workspace/tools/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu/bin:$PATH
-            VARS_KERNEL_ARCH=arm64
-            VARS_QEMU_ARCH=arm64
+            VARS_ARCH=arm64
             VARS_KERNEL_CONFIG=defconfig
             SYSTEM_CC_PREFIX=aarch64-linux-gnu-
             BAREMETAL_CC_PREFIX=aarch64-linux-gnu-
@@ -159,9 +154,15 @@ fBuildUBoot()
 {
     fPrintHeader "Building U-Boot"
     cd ${UBOOT_PATH}
-    make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} vexpress_ca9x4_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
-    ${BUILD_PREFIX} make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} -j ${JOBS}; fErrControl ${FUNCNAME[0]} ${LINENO}
-    cp ${UBOOT_PATH}/u-boot ${BUILD_PATH}/zImage; fErrControl ${FUNCNAME[0]} ${LINENO}
+    if [ "${VARS_ARCH}" = "arm" ]
+    then
+        make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} vexpress_ca9x4_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+        ${BUILD_PREFIX} make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} -j ${JOBS}; fErrControl ${FUNCNAME[0]} ${LINENO}
+        cp ${UBOOT_PATH}/u-boot ${BUILD_PATH}/zImage; fErrControl ${FUNCNAME[0]} ${LINENO}
+    elif [ "${VARS_ARCH}" = "arm" ]
+    then
+        echo Uboot not support in ${VARS_ARCH}
+    fi
 }
 fBuildLinux()
 {
@@ -173,15 +174,15 @@ fBuildLinux()
         # you can get a list of predefined configs for ARM under arch/arm/configs/
         # this configures the kernel compilation parameters
         # make ARCH=arm versatile_defconfig
-        make ARCH=${VARS_KERNEL_ARCH} ${VARS_KERNEL_CONFIG}; fErrControl ${FUNCNAME[0]} ${LINENO}
+        make ARCH=${VARS_ARCH} ${VARS_KERNEL_CONFIG}; fErrControl ${FUNCNAME[0]} ${LINENO}
 
         # menuconfig
-        make ARCH=${VARS_KERNEL_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} menuconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+        make ARCH=${VARS_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} menuconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
 
     # this compiles the kernel, add "-j <number_of_cpus>" to it to use multiple CPUs to reduce build time
-    ${BUILD_PREFIX} make -j ${JOBS} ARCH=${VARS_KERNEL_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} all; fErrControl ${FUNCNAME[0]} ${LINENO}
-    ${BUILD_PREFIX} make modules_install INSTALL_MOD_PATH=${ROOTFS_PATH} ARCH=${VARS_KERNEL_ARCH}
+    ${BUILD_PREFIX} make -j ${JOBS} ARCH=${VARS_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} all; fErrControl ${FUNCNAME[0]} ${LINENO}
+    ${BUILD_PREFIX} make modules_install INSTALL_MOD_PATH=${ROOTFS_PATH} ARCH=${VARS_ARCH}
     # self decompressing gzip image on arch/arm/boot/zImage and arch/arm/boot/Image is the decompressed image.
     # update files
     cp -f ${KERNEL_PATH}/arch/arm/boot/Image ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
@@ -198,7 +199,7 @@ fBuildBusybox()
     then
         make ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
         # patch for static library
-        if [ "$VARS_QEMU_ARCH" = "arm" ]
+        if [ "$VARS_ARCH" = "arm" ]
         then
             echo "Patch for ARM"
             sed -i "s/# CONFIG_STATIC is not set/CONFIG_STATIC=y/g" .config
@@ -288,7 +289,7 @@ fRunGDB()
 }
 fRunEmulation()
 {
-    if [ "${VARS_QEMU_ARCH}" = "arm" ]
+    if [ "${VARS_ARCH}" = "arm" ]
     then
         fPrintHeader "Run Qemu arm"
         cd ${BUILD_PATH}
@@ -307,7 +308,7 @@ fRunEmulation()
         qemu_cmd+=(-hda disk.img)
         # qemu_cmd+=(-device e1000,netdev=eth0)
         # qemu_cmd+=(-s -S)
-    elif [ "${VARS_QEMU_ARCH}" = "arm64" ]
+    elif [ "${VARS_ARCH}" = "arm64" ]
     then
         fPrintHeader "Run Qemu arm64"
         cd ${BUILD_PATH}
