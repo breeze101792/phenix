@@ -1,14 +1,14 @@
 #!/bin/bash
-##############################################
+###########################################################
 ## Vars
-##############################################
+###########################################################
 export JOBS=$(nproc --all)
 export FLAG_GRAPHIC=false
 export BUILD_PREFIX=""
 
-##############################################
+###########################################################
 ## Options
-##############################################
+###########################################################
 # Default
 export VARS_ARCH=""
 export VARS_KERNEL_CONFIG=""
@@ -28,10 +28,12 @@ export PATH_TOOLCHAIN_LIBC=""
 # export SYSTEM_CC_PREFIX=arm-linux-gnueabihf-
 # export BAREMETAL_CC_PREFIX=arm-none-eabi-
 # export PATH_TOOLCHAIN_LIBC=""
-##############################################
+###########################################################
 ## Options
-##############################################
-export OPTION_BUILD_ALL=false
+###########################################################
+export OPTION_DOWNLOAD_KERNEL=false
+export OPTION_DOWNLOAD_ROOTFS=false
+export OPTION_DOWNLOAD_UBOOT=false
 export OPTION_BUILD_KERNEL=false
 export OPTION_BUILD_ROOTFS=false
 export OPTION_BUILD_UBOOT=false
@@ -39,26 +41,27 @@ export OPTION_RUN_EMULATION=false
 export OPTION_RUN_GDB=false
 export OPTION_ENABLE_MENUCONFIG=false
 export OPTION_ARCH=arm64
-##############################################
+###########################################################
 ## Path
-##############################################
+###########################################################
 export ROOT_PATH=${PWD}
 export UBOOT_PATH=${ROOT_PATH}/u-boot
 export KERNEL_PATH=${ROOT_PATH}/linux
 export BUSYBOX_PATH=${ROOT_PATH}/busybox
-export BUILD_PATH=${ROOT_PATH}/build
-export ROOTFS_PATH=${BUILD_PATH}/rootfs
-##############################################
+# will be Seted latter
+export BUILD_PATH=""
+export ROOTFS_PATH=""
+###########################################################
 ## Functions
-##############################################
+###########################################################
 fPrintHeader()
 {
     local msg=${1}
-    echo "##############################################"
-    echo "##############################################"
+    echo "###########################################################"
+    echo "###########################################################"
     echo "## ${msg} "
-    echo "##############################################"
-    echo "##############################################"
+    echo "###########################################################"
+    echo "###########################################################"
 }
 fErrControl()
 {
@@ -75,20 +78,47 @@ fErrControl()
 }
 fHelp()
 {
-    fPrintHeader "Help"
+    echo "phenix"
     echo "Example:"
     echo "run arm64: phenix.sh -a"
-    echo "run arm: phenix.sh -a --arch=arm"
+    echo "run arm: phenix.sh -a --arch arm"
+    echo "[Options]"
+    printf "    %s\t%s\n" "-m|--menuconfig" "Do menuconfig"
+    printf "    %s\t%s\n" "-b|--build" "Do build"
+    printf "    %s\t%s\n" "-a|--all" "Do all"
+    printf "    %s\t%s\n" "-u|--uboot" "Compile uboot"
+    printf "    %s\t%s\n" "-l|--linux" "Compile linux"
+    printf "    %s\t%s\n" "-r|--rootfs" "Compile rootfs"
+    printf "    %s\t%s\n" "-q|--qemu" "Run with qemu"
+    printf "    %s\t%s\n" "-d|--debug" "enable debug"
+    printf "    %s\t%s\n" "--download-all" "Download all"
+    echo [Config]
+    printf "    %s\t%s\n" "-j|--job" "Jobs Thread"
+
+}
+fInfo()
+{
+    printf "###########################################################\n"
+    printf "## Options\n"
+    printf "###########################################################\n"
+    printf "##  %s\t: %s\n" "Arch" "${VARS_ARCH}"
+    printf "##  %s\t: %s\n" "BUILD_PATH" "${BUILD_PATH}"
+    printf "##  %s\t: %s\n" "ROOTFS_PATH" "${ROOTFS_PATH}"
+    printf "###########################################################\n"
+
 }
 fSetupEnv()
 {
+    BUILD_PATH=${ROOT_PATH}/build/${VARS_ARCH}
+    ROOTFS_PATH=${BUILD_PATH}/rootfs
+
     if [ ! -d ${BUILD_PATH} ]
     then
-        mkdir ${BUILD_PATH}
+        mkdir -p ${BUILD_PATH}
     fi
     if [ ! -d ${BUILD_PATH}/rootfs ]
     then
-        mkdir ${BUILD_PATH}/rootfs
+        mkdir -p ${BUILD_PATH}/rootfs
     fi
     cd ${BUILD_PATH}
     if [ ! -f disk.img ]
@@ -100,7 +130,7 @@ fSelectArch()
 {
     local arch=$1
     case ${arch} in
-        arm)
+        arm|arm32)
             echo "ARM 32"
             VARS_ARCH=arm
             VARS_KERNEL_CONFIG=vexpress_defconfig
@@ -197,17 +227,16 @@ fBuildBusybox()
     cd ${BUSYBOX_PATH}
     if [ ${OPTION_ENABLE_MENUCONFIG} = true ]
     then
-        make ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+        make ARCH=${VARS_ARCH} CROSS_COMPILE=${SYSTEM_CC_PREFIX} defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+
         # patch for static library
-        if [ "$VARS_ARCH" = "arm" ]
-        then
-            echo "Patch for ARM"
-            sed -i "s/# CONFIG_STATIC is not set/CONFIG_STATIC=y/g" .config
-        fi
-        make ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} menuconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+        # FIXME 
+        echo "Please do Busybox Settings –> Build Options. If you don't have libc library"
+        echo "Patch for ARM"
+        sed -i "s/# CONFIG_STATIC is not set/CONFIG_STATIC=y/g" .config
+
+        make ARCH=${VARS_ARCH} CROSS_COMPILE=${SYSTEM_CC_PREFIX} menuconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
-    # FIXME 
-    echo "Please do Busybox Settings –> Build Options. If you don't have libc library"
     ${BUILD_PREFIX} make -j ${JOBS} ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} install; fErrControl ${FUNCNAME[0]} ${LINENO}
     cp -rf ${BUSYBOX_PATH}/_install/* ${BUILD_PATH}/rootfs/; fErrControl ${FUNCNAME[0]} ${LINENO}
 }
@@ -302,7 +331,7 @@ fRunEmulation()
         qemu_cmd+=(-dtb device_tree.dtb)
         qemu_cmd+=(-nographic)
         qemu_cmd+=(-m 128M)
-        qemu_cmd+=(-initrd initramfs)
+        qemu_cmd+=(-initrd ./initramfs)
 
         qemu_cmd+=(-s)
         qemu_cmd+=(-hda disk.img)
@@ -321,7 +350,8 @@ fRunEmulation()
         qemu_cmd+=(-nographic)
         qemu_cmd+=(-smp 1)
         qemu_cmd+=(-initrd ./initramfs)
-        qemu_cmd+=(-kernel ../linux/arch/arm64/boot/Image)
+        # qemu_cmd+=(-kernel ../linux/arch/arm64/boot/Image)
+        qemu_cmd+=(-kernel ./Image)
         qemu_cmd+=(-m 2048)
         qemu_cmd+=(-net user,hostfwd=tcp::10023-:22 -net nic)
 
@@ -329,95 +359,133 @@ fRunEmulation()
     echo "${qemu_cmd[@]} -append \"${kernel_command}\""
     eval "${qemu_cmd[@]} -append \"${kernel_command}\""
 }
-while true
-do
-    case $1 in
-        --arch)
-            OPTION_ARCH=$2
-            shift 2
-            ;;
-        -m|--menuconfig)
-            OPTION_ENABLE_MENUCONFIG=true
-            shift 1
-            ;;
-        --rebuild)
-            OPTION_BUILD_KERNEL=true
-            OPTION_BUILD_ROOTFS=true
-            OPTION_RUN_EMULATION=true
-            shift 1
-            ;;
-        -a|--all)
-            OPTION_ENABLE_MENUCONFIG=true
-            OPTION_BUILD_ALL=true
-            shift 1
-            ;;
-        -u|--uboot)
-            OPTION_BUILD_UBOOT=true
-            shift 1
-            ;;
-        -l|--linux)
-            OPTION_BUILD_KERNEL=true
-            shift 1
-            ;;
-        -r|--rootfs)
-            OPTION_BUILD_ROOTFS=true
-            shift 1
-            ;;
-        -q|--qemu)
-            OPTION_RUN_EMULATION=true
-            shift 1
-            ;;
-        -d|--debug)
-            OPTION_RUN_GDB=true
-            DEBUG_TARGET=$2
-            shift 2
-            ;;
-        --job)
-            JOBS=$2
-            shift 2
-            ;;
-        --build-prefix)
-            BUILD_PREFIX=$2
-            shift 2
-            ;;
-        -h|--help)
-            fHelp
-            exit 0
-            ;;
-        *)
-            break
-            ;;
-    esac
-done
-fSetupEnv
-fSelectArch ${OPTION_ARCH}
-if [ ${OPTION_BUILD_ALL} = true ]
-then
-    fDownloadUBoot
-    fDownloadLinux
-    fDownloadBusybox
-    fBuildLinux
-    fBuildRootfs
-    fRunEmulation
-    exit 0
-fi
-if [ ${OPTION_BUILD_UBOOT} = true ]
-then
-    fBuildUBoot
-fi
-if [ ${OPTION_BUILD_KERNEL} = true ]
-then
-    fBuildLinux
-fi
-if [ ${OPTION_BUILD_ROOTFS} = true ]
-then
-    fBuildRootfs
-fi
-if [ ${OPTION_RUN_EMULATION} = true ]
-then
-    fRunEmulation
-fi
-if [ ${OPTION_RUN_GDB} = true ]
-then
-    fRunGDB ${DEBUG_TARGET}
-fi
+function fmain()
+{
+    while [[ $# != 0 ]]
+    do
+        case $1 in
+            --arch)
+                OPTION_ARCH=$2
+                shift 2
+                ;;
+            -m|--menuconfig)
+                OPTION_ENABLE_MENUCONFIG=true
+                shift 1
+                ;;
+            -b|--build)
+                OPTION_BUILD_KERNEL=true
+                OPTION_BUILD_ROOTFS=true
+                OPTION_RUN_EMULATION=true
+                shift 1
+                ;;
+            --download-all)
+                OPTION_DOWNLOAD_KERNEL=true
+                OPTION_DOWNLOAD_ROOTFS=true
+                OPTION_DOWNLOAD_UBOOT=true
+                shift 1
+                ;;
+            -a|--all)
+                OPTION_ENABLE_MENUCONFIG=true
+
+                OPTION_DOWNLOAD_KERNEL=true
+                OPTION_DOWNLOAD_ROOTFS=true
+                OPTION_DOWNLOAD_UBOOT=true
+
+                OPTION_BUILD_UBOOT=true
+                OPTION_BUILD_KERNEL=true
+                OPTION_BUILD_ROOTFS=true
+
+                OPTION_RUN_EMULATION=true
+                shift 1
+                ;;
+            -u|--uboot)
+                OPTION_BUILD_UBOOT=true
+                shift 1
+                ;;
+            -l|--linux)
+                OPTION_BUILD_KERNEL=true
+                shift 1
+                ;;
+            -r|--rootfs)
+                OPTION_BUILD_ROOTFS=true
+                shift 1
+                ;;
+            -c|--clean)
+                rm ${BUILD_PATH}
+                shift 1
+                ;;
+            -q|--qemu)
+                OPTION_RUN_EMULATION=true
+                shift 1
+                ;;
+            -d|--debug)
+                OPTION_RUN_GDB=true
+                DEBUG_TARGET=$2
+                shift 2
+                ;;
+            -j|--job)
+                JOBS=$2
+                shift 2
+                ;;
+            --build-prefix)
+                BUILD_PREFIX=$2
+                shift 2
+                ;;
+            -h|--help)
+                fHelp
+                exit 0
+                ;;
+            *)
+                echo "Unknown Options: ${1}"
+                fHelp
+                exit 1
+                ;;
+        esac
+    done
+
+    # Preset
+    fSelectArch ${OPTION_ARCH}
+
+    # Post settings
+    fSetupEnv
+
+    fInfo
+
+    ## Download
+    if [ ${OPTION_DOWNLOAD_KERNEL} = true ]
+    then
+        fDownloadUBoot
+    fi
+    if [ ${OPTION_DOWNLOAD_ROOTFS} = true ]
+    then
+        fDownloadLinux
+    fi
+    if [ ${OPTION_DOWNLOAD_UBOOT} = true ]
+    then
+        fDownloadBusybox
+    fi
+
+    ## build
+    if [ ${OPTION_BUILD_UBOOT} = true ]
+    then
+        fBuildUBoot
+    fi
+    if [ ${OPTION_BUILD_KERNEL} = true ]
+    then
+        fBuildLinux
+    fi
+    if [ ${OPTION_BUILD_ROOTFS} = true ]
+    then
+        fBuildRootfs
+    fi
+    if [ ${OPTION_RUN_EMULATION} = true ]
+    then
+        fRunEmulation
+    fi
+    if [ ${OPTION_RUN_GDB} = true ]
+    then
+        fRunGDB ${DEBUG_TARGET}
+    fi
+}
+
+fmain $@
