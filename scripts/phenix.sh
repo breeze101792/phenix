@@ -39,8 +39,11 @@ export OPTION_BUILD_ROOTFS=false
 export OPTION_BUILD_UBOOT=false
 export OPTION_RUN_EMULATION=false
 export OPTION_RUN_GDB=false
-export OPTION_ENABLE_MENUCONFIG=false
+
 export OPTION_ARCH=arm64
+export OPTION_COPY_CONFIG=false
+export OPTION_CLEAN_BUILD=false
+export OPTION_ENABLE_MENUCONFIG=false
 ###########################################################
 ## Path
 ###########################################################
@@ -83,7 +86,6 @@ fHelp()
     echo "run arm64: phenix.sh -a"
     echo "run arm: phenix.sh -a --arch arm"
     echo "[Options]"
-    printf "    %s\t%s\n" "-m|--menuconfig" "Do menuconfig"
     printf "    %s\t%s\n" "-b|--build" "Do build"
     printf "    %s\t%s\n" "-a|--all" "Do all"
     printf "    %s\t%s\n" "-u|--uboot" "Compile uboot"
@@ -94,6 +96,7 @@ fHelp()
     printf "    %s\t%s\n" "--download-all" "Download all"
     echo [Config]
     printf "    %s\t%s\n" "-j|--job" "Jobs Thread"
+    printf "    %s\t%s\n" "--copy-config" "Copy config"
 
 }
 fInfo()
@@ -189,8 +192,7 @@ fBuildUBoot()
         make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} vexpress_ca9x4_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
         ${BUILD_PREFIX} make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} -j ${JOBS}; fErrControl ${FUNCNAME[0]} ${LINENO}
         cp ${UBOOT_PATH}/u-boot ${BUILD_PATH}/zImage; fErrControl ${FUNCNAME[0]} ${LINENO}
-    elif [ "${VARS_ARCH}" = "arm" ]
-    then
+    else
         echo Uboot not support in ${VARS_ARCH}
     fi
 }
@@ -199,33 +201,47 @@ fBuildLinux()
     fPrintHeader "Building Linux Kernel"
     cd ${KERNEL_PATH}
 
-    if [ ${OPTION_ENABLE_MENUCONFIG} = true ]
+    if [ ${OPTION_COPY_CONFIG} = true ]
     then
         # you can get a list of predefined configs for ARM under arch/arm/configs/
         # this configures the kernel compilation parameters
         # make ARCH=arm versatile_defconfig
         make ARCH=${VARS_ARCH} ${VARS_KERNEL_CONFIG}; fErrControl ${FUNCNAME[0]} ${LINENO}
+    fi
 
+    if [ ${OPTION_ENABLE_MENUCONFIG} = true ]
+    then
         # menuconfig
         make ARCH=${VARS_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} menuconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
 
     # this compiles the kernel, add "-j <number_of_cpus>" to it to use multiple CPUs to reduce build time
+    if [ ${OPTION_CLEAN_BUILD} = true ]
+    then
+        ${BUILD_PREFIX} make -j ${JOBS} ARCH=${VARS_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} clean; fErrControl ${FUNCNAME[0]} ${LINENO}
+    fi
+
     ${BUILD_PREFIX} make -j ${JOBS} ARCH=${VARS_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} all; fErrControl ${FUNCNAME[0]} ${LINENO}
     ${BUILD_PREFIX} make modules_install INSTALL_MOD_PATH=${ROOTFS_PATH} ARCH=${VARS_ARCH}
     # self decompressing gzip image on arch/arm/boot/zImage and arch/arm/boot/Image is the decompressed image.
     # update files
-    cp -f ${KERNEL_PATH}/arch/arm/boot/Image ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
-    cp -f ${KERNEL_PATH}/arch/arm/boot/zImage ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
-    # cp -f ${KERNEL_PATH}/arch/arm/boot/uImage ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
-    # cp -f ${KERNEL_PATH}/arch/arm/boot/dts/versatile-pb.dtb ${BUILD_PATH}/device_tree.dtb
-    cp -f ${KERNEL_PATH}/arch/arm/boot/dts/vexpress-v2p-ca9.dtb ${BUILD_PATH}/device_tree.dtb; fErrControl ${FUNCNAME[0]} ${LINENO}
+    if [ ${VARS_ARCH} = "arm" ]
+    then
+        cp -f ${KERNEL_PATH}/arch/arm/boot/Image ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
+        cp -f ${KERNEL_PATH}/arch/arm/boot/zImage ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
+        # cp -f ${KERNEL_PATH}/arch/arm/boot/uImage ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
+        # cp -f ${KERNEL_PATH}/arch/arm/boot/dts/versatile-pb.dtb ${BUILD_PATH}/device_tree.dtb
+        cp -f ${KERNEL_PATH}/arch/arm/boot/dts/vexpress-v2p-ca9.dtb ${BUILD_PATH}/device_tree.dtb; fErrControl ${FUNCNAME[0]} ${LINENO}
+    elif [ ${VARS_ARCH} = "arm64" ]
+    then
+        cp -f ${KERNEL_PATH}/arch/arm64/boot/Image ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
+    fi
 }
 fBuildBusybox()
 {
     fPrintHeader "Building busybox"
     cd ${BUSYBOX_PATH}
-    if [ ${OPTION_ENABLE_MENUCONFIG} = true ]
+    if [ ${OPTION_COPY_CONFIG} = true ]
     then
         make ARCH=${VARS_ARCH} CROSS_COMPILE=${SYSTEM_CC_PREFIX} defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
 
@@ -234,8 +250,16 @@ fBuildBusybox()
         echo "Please do Busybox Settings –> Build Options. If you don't have libc library"
         echo "Patch for ARM"
         sed -i "s/# CONFIG_STATIC is not set/CONFIG_STATIC=y/g" .config
+    fi
 
+    if [ ${OPTION_ENABLE_MENUCONFIG} = true ]
+    then
         make ARCH=${VARS_ARCH} CROSS_COMPILE=${SYSTEM_CC_PREFIX} menuconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+    fi
+
+    if [ ${OPTION_CLEAN_BUILD} = true ]
+    then
+        ${BUILD_PREFIX} make -j ${JOBS} ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} clean; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
     ${BUILD_PREFIX} make -j ${JOBS} ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} install; fErrControl ${FUNCNAME[0]} ${LINENO}
     cp -rf ${BUSYBOX_PATH}/_install/* ${BUILD_PATH}/rootfs/; fErrControl ${FUNCNAME[0]} ${LINENO}
@@ -372,6 +396,10 @@ function fmain()
                 OPTION_ENABLE_MENUCONFIG=true
                 shift 1
                 ;;
+            --copy-config)
+                OPTION_COPY_CONFIG=true
+                shift 1
+                ;;
             -b|--build)
                 OPTION_BUILD_KERNEL=true
                 OPTION_BUILD_ROOTFS=true
@@ -385,13 +413,13 @@ function fmain()
                 shift 1
                 ;;
             -a|--all)
-                OPTION_ENABLE_MENUCONFIG=true
+                OPTION_COPY_CONFIG=true
 
                 OPTION_DOWNLOAD_KERNEL=true
                 OPTION_DOWNLOAD_ROOTFS=true
-                OPTION_DOWNLOAD_UBOOT=true
+                # OPTION_DOWNLOAD_UBOOT=true
 
-                OPTION_BUILD_UBOOT=true
+                # OPTION_BUILD_UBOOT=true
                 OPTION_BUILD_KERNEL=true
                 OPTION_BUILD_ROOTFS=true
 
@@ -411,7 +439,7 @@ function fmain()
                 shift 1
                 ;;
             -c|--clean)
-                rm ${BUILD_PATH}
+                OPTION_CLEAN_BUILD=true
                 shift 1
                 ;;
             -q|--qemu)
