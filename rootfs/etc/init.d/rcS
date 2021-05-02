@@ -1,7 +1,12 @@
 #!/bin/sh
+# Create system
 mkdir /proc /sys /run
 mount -vt proc proc /proc
 mount -vt sysfs sysfs /sys
 mount -vt tmpfs tmpfs /run
 mdev -s
+
+# Network
+udhcpc -i eth0
+
 printf "Welcome to phenix project"
