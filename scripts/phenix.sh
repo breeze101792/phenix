@@ -34,16 +34,19 @@ export PATH_TOOLCHAIN_LIBC=""
 export OPTION_DOWNLOAD_KERNEL=false
 export OPTION_DOWNLOAD_ROOTFS=false
 export OPTION_DOWNLOAD_UBOOT=false
+export OPTION_BUILD_UBOOT=false
 export OPTION_BUILD_KERNEL=false
 export OPTION_BUILD_ROOTFS=false
-export OPTION_BUILD_UBOOT=false
+export OPTION_BUILD_IMAGE=false
 export OPTION_RUN_EMULATION=false
 export OPTION_RUN_GDB=false
 
-export OPTION_ARCH=arm64
+# export OPTION_ARCH=arm64
+export OPTION_ARCH=arm # arm/arm64
 export OPTION_COPY_CONFIG=false
 export OPTION_CLEAN_BUILD=false
 export OPTION_ENABLE_MENUCONFIG=false
+export OPTION_EMULATION_RUNTIME="kernel" # kernel/uboot//disk
 ###########################################################
 ## Path
 ###########################################################
@@ -86,18 +89,21 @@ fHelp()
     echo "run arm64: phenix.sh -a"
     echo "run arm: phenix.sh -a --arch arm"
     echo "[Options]"
-    printf "    %s\t%s\n" "-b|--build" "Do build"
-    printf "    %s\t%s\n" "-a|--all" "Do all"
-    printf "    %s\t%s\n" "-u|--uboot" "Compile uboot"
-    printf "    %s\t%s\n" "-l|--linux" "Compile linux"
-    printf "    %s\t%s\n" "-r|--rootfs" "Compile rootfs"
-    printf "    %s\t%s\n" "-q|--qemu" "Run with qemu"
-    printf "    %s\t%s\n" "-d|--debug" "enable debug"
-    printf "    %s\t%s\n" "--download-all" "Download all"
+    printf "    %- 16s\t%s\n" "-a|--all" "Do all"
+    printf "    %- 16s\t%s\n" "--download-all" "Download all"
+    printf "    %- 16s\t%s\n" "-b|--build" "Do build"
+    printf "    %- 16s\t%s\n" "-u|--uboot" "Compile uboot"
+    printf "    %- 16s\t%s\n" "-l|--linux" "Compile linux"
+    printf "    %- 16s\t%s\n" "-r|--rootfs" "Compile rootfs"
+    printf "    %- 16s\t%s\n" "-q|--qemu" "Run with qemu"
+    printf "    %- 16s\t%s\n" "-d|--debug" "enable debug"
     echo [Config]
-    printf "    %s\t%s\n" "-j|--job" "Jobs Thread"
-    printf "    %s\t%s\n" "--copy-config" "Copy config"
-
+    printf "    %- 16s\t%s\n" "-j|--job" "Jobs Thread"
+    printf "    %- 16s\t%s\n" "--arch" "Jobs Thread"
+    printf "    %- 16s\t%s\n" "-m|--menuconfig" "Do menuconfig"
+    printf "    %- 16s\t%s\n" "--copy-config" "Copy config file"
+    printf "    %- 16s\t%s\n" "--build-prefix" "NA"
+    printf "    %- 16s\t%s\n" "-h|--help" "Help me"
 }
 fInfo()
 {
@@ -191,7 +197,7 @@ fBuildUBoot()
     then
         make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} vexpress_ca9x4_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
         ${BUILD_PREFIX} make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} -j ${JOBS}; fErrControl ${FUNCNAME[0]} ${LINENO}
-        cp ${UBOOT_PATH}/u-boot ${BUILD_PATH}/zImage; fErrControl ${FUNCNAME[0]} ${LINENO}
+        cp ${UBOOT_PATH}/u-boot ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
     else
         echo Uboot not support in ${VARS_ARCH}
     fi
@@ -267,7 +273,7 @@ fBuildBusybox()
 fBuildRootfs_struct()
 {
     fPrintHeader "Create root structure"
-    mkdir -pv ${ROOTFS_PATH}/{bin,boot,etc/{opt,sysconfig},home,lib/firmware,mnt,opt}
+    mkdir -pv ${ROOTFS_PATH}/{bin,boot,etc/{opt,sysconfig},home,lib/firmware,mnt,opt,dev}
     mkdir -pv ${ROOTFS_PATH}/{media/{floppy,cdrom},sbin,srv,var}
     install -dv -m 0750 ${ROOTFS_PATH}/root
     install -dv -m 1777 ${ROOTFS_PATH}/tmp /var/tmp
@@ -320,6 +326,58 @@ fBuildRootfs()
         # cp -f initramfs ${BUILD_PATH}/
     fi
 }
+fBuildImage()
+{
+    fPrintHeader "Build Image"
+    local var_ava_loop=$(sudo losetup -f)
+    local var_disk_name=system.img
+    local var_disk_path=${BUILD_PATH}/disk
+    local mpt_kernel="kernel"
+    local mpt_rootfs="rootfs"
+
+    cd ${BUILD_PATH}
+    # create image
+    dd if=/dev/zero of=${var_disk_name} bs=1M count=1024
+
+    # create partition
+    sgdisk -n 0:0:+10M -c 0:kernel ${var_disk_name}
+    sgdisk -n 0:0:0 -c 0:rootfs ${var_disk_name}
+
+    # check disk info
+    sgdisk -p ${var_disk_name}
+
+    # mapping disk
+    sudo losetup ${var_ava_loop} ${var_disk_name}
+    # info system about part table changed
+    sudo partprobe ${var_ava_loop}
+
+    # create file system
+    sudo mkfs.ext4 ${var_ava_loop}p1
+    sudo mkfs.ext4 ${var_ava_loop}p2
+
+    # create dirs
+    mkdir -p ${var_disk_path}/${mpt_kernel}/
+    mkdir -p ${var_disk_path}/${mpt_rootfs}/
+
+    # mount disk
+    sudo mount -t ext4 ${var_ava_loop}p1  ${var_disk_path}/${mpt_kernel}/
+    sudo mount -t ext4 ${var_ava_loop}p2  ${var_disk_path}/${mpt_rootfs}/
+
+    # set up disk
+    sudo cp  ${BUILD_PATH}/zImage ${var_disk_path}/${mpt_kernel}/
+    # sudo cp  ${BUILD_PATH}/Image ${var_disk_path}/${mpt_kernel}/
+    sudo cp  ${BUILD_PATH}/device_tree.dtb ${var_disk_path}/${mpt_kernel}/
+    sudo cp -rf ${ROOTFS_PATH}/* ${var_disk_path}/${mpt_rootfs}/
+
+    # list content
+    tree ${var_disk_path}/${mpt_kernel}/
+    tree ${var_disk_path}/${mpt_rootfs}/
+
+    # deallocate resource
+    sudo umount ${var_disk_path}/${mpt_kernel}/
+    sudo umount ${var_disk_path}/${mpt_rootfs}/
+    sudo losetup -d ${var_ava_loop}
+}
 fRunGDB()
 {
     case $1 in
@@ -341,6 +399,53 @@ fRunGDB()
 
 }
 fRunEmulation()
+{
+    fPrintHeader "Run Qemu in ${OPTION_EMULATION_RUNTIME} mode"
+    if [ "${OPTION_EMULATION_RUNTIME}" = "kernel" ]
+    then
+        fRunEmulation_kernel
+        return
+    elif [ "${OPTION_EMULATION_RUNTIME}" = "uboot" ]
+    then
+        fPrintHeader "Run Qemu Uboot"
+        cd ${BUILD_PATH}
+        local kernel_command=""
+        local qemu_cmd=(qemu-system-arm )
+        qemu_cmd+=(-machine vexpress-a9)
+        qemu_cmd+=(-kernel ./u-boot)
+        # qemu_cmd+=(-dtb device_tree.dtb)
+        qemu_cmd+=(-nographic)
+        qemu_cmd+=(-m 128M)
+        # qemu_cmd+=(-initrd ./initramfs)
+
+        qemu_cmd+=(-s)
+        # qemu_cmd+=(-device e1000,netdev=eth0)
+    elif [ "${OPTION_EMULATION_RUNTIME}" = "disk" ]
+    then
+        fPrintHeader "Run Qemu disk"
+        cd ${BUILD_PATH}
+        local kernel_command=""
+        local qemu_cmd=(qemu-system-arm )
+        qemu_cmd+=(-machine vexpress-a9)
+        qemu_cmd+=(-kernel u-boot)
+        # qemu_cmd+=(-dtb device_tree.dtb)
+        qemu_cmd+=(-nographic)
+        qemu_cmd+=(-m 128M)
+        qemu_cmd+=(-sd system.img)
+
+        qemu_cmd+=(-s)
+        # qemu_cmd+=(-device e1000,netdev=eth0)
+        echo "This function is not done yet. Please do the following things in uboot."
+        echo "setenv bootcmd 'load mmc 0:1 0x60008000 zImage;load mmc 0:1 0x61000000 device_tree.dtb;bootz 0x60008000 - 0x61000000'"
+        echo "setenv bootargs 'root=/dev/mmcblk0p2 rw rootfstype=ext4 rootwait earlycon console=tty0 console=ttyAMA0 init=/linuxrc LOGLEVEL=8'"
+        echo "saveenv; reset"
+        printf "Press Enter to Continue."
+        read tmp_test
+    fi
+    echo "${qemu_cmd[@]} -append \"${kernel_command}\""
+    eval "${qemu_cmd[@]} -append \"${kernel_command}\""
+}
+fRunEmulation_kernel()
 {
     if [ "${VARS_ARCH}" = "arm" ]
     then
@@ -388,21 +493,19 @@ function fmain()
     while [[ $# != 0 ]]
     do
         case $1 in
-            --arch)
-                OPTION_ARCH=$2
-                shift 2
-                ;;
-            -m|--menuconfig)
-                OPTION_ENABLE_MENUCONFIG=true
-                shift 1
-                ;;
-            --copy-config)
+            # Options
+            -a|--all)
                 OPTION_COPY_CONFIG=true
-                shift 1
-                ;;
-            -b|--build)
+
+                OPTION_DOWNLOAD_KERNEL=true
+                OPTION_DOWNLOAD_ROOTFS=true
+                OPTION_DOWNLOAD_UBOOT=true
+
+                OPTION_BUILD_UBOOT=true
                 OPTION_BUILD_KERNEL=true
                 OPTION_BUILD_ROOTFS=true
+                OPTION_BUILD_IMAGE=true
+
                 OPTION_RUN_EMULATION=true
                 shift 1
                 ;;
@@ -412,17 +515,9 @@ function fmain()
                 OPTION_DOWNLOAD_UBOOT=true
                 shift 1
                 ;;
-            -a|--all)
-                OPTION_COPY_CONFIG=true
-
-                OPTION_DOWNLOAD_KERNEL=true
-                OPTION_DOWNLOAD_ROOTFS=true
-                # OPTION_DOWNLOAD_UBOOT=true
-
-                # OPTION_BUILD_UBOOT=true
+            -b|--build)
                 OPTION_BUILD_KERNEL=true
                 OPTION_BUILD_ROOTFS=true
-
                 OPTION_RUN_EMULATION=true
                 shift 1
                 ;;
@@ -438,12 +533,29 @@ function fmain()
                 OPTION_BUILD_ROOTFS=true
                 shift 1
                 ;;
+            -i|--image)
+                OPTION_BUILD_IMAGE=true
+                shift 1
+                ;;
             -c|--clean)
                 OPTION_CLEAN_BUILD=true
                 shift 1
                 ;;
             -q|--qemu)
                 OPTION_RUN_EMULATION=true
+                if [ "${2}" = "kernel" ]
+                then
+                    OPTION_EMULATION_RUNTIME="kernel"
+                    shift 1
+                elif [ "${2}" = "uboot" ]
+                then
+                    OPTION_EMULATION_RUNTIME="uboot"
+                    shift 1
+                elif [ "${2}" = "disk" ]
+                then
+                    OPTION_EMULATION_RUNTIME="disk"
+                    shift 1
+                fi
                 shift 1
                 ;;
             -d|--debug)
@@ -451,9 +563,22 @@ function fmain()
                 DEBUG_TARGET=$2
                 shift 2
                 ;;
+            # Config
             -j|--job)
                 JOBS=$2
                 shift 2
+                ;;
+            --arch)
+                OPTION_ARCH=$2
+                shift 2
+                ;;
+            -m|--menuconfig)
+                OPTION_ENABLE_MENUCONFIG=true
+                shift 1
+                ;;
+            --copy-config)
+                OPTION_COPY_CONFIG=true
+                shift 1
                 ;;
             --build-prefix)
                 BUILD_PREFIX=$2
@@ -505,6 +630,10 @@ function fmain()
     if [ ${OPTION_BUILD_ROOTFS} = true ]
     then
         fBuildRootfs
+    fi
+    if [ ${OPTION_BUILD_IMAGE} = true ]
+    then
+        fBuildImage
     fi
     if [ ${OPTION_RUN_EMULATION} = true ]
     then
