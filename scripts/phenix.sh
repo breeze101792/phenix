@@ -46,7 +46,7 @@ export OPTION_ARCH=arm # arm/arm64
 export OPTION_COPY_CONFIG=false
 export OPTION_CLEAN_BUILD=false
 export OPTION_ENABLE_MENUCONFIG=false
-export OPTION_EMULATION_RUNTIME="kernel" # kernel/uboot//disk
+export OPTION_EMULATION_RUNTIME="disk" # kernel/uboot//disk
 ###########################################################
 ## Path
 ###########################################################
@@ -85,9 +85,9 @@ fErrControl()
 fHelp()
 {
     echo "phenix"
-    echo "Example:"
-    echo "run arm64: phenix.sh -a"
-    echo "run arm: phenix.sh -a --arch arm"
+    echo "[Example]"
+    printf "    %s\n" "run arm(with uboot): phenix.sh -a"
+    printf "    %s\n" "run arm64(didn't support uboot): phenix.sh -a --arch arm64 -q kernel"
     echo "[Options]"
     printf "    %- 16s\t%s\n" "-a|--all" "Do all"
     printf "    %- 16s\t%s\n" "--download-all" "Download all"
@@ -195,8 +195,37 @@ fBuildUBoot()
     cd ${UBOOT_PATH}
     if [ "${VARS_ARCH}" = "arm" ]
     then
-        make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} vexpress_ca9x4_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
-        ${BUILD_PREFIX} make ARCH=arm CROSS_COMPILE=${BAREMETAL_CC_PREFIX} -j ${JOBS}; fErrControl ${FUNCNAME[0]} ${LINENO}
+        make ARCH=${VARS_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} vexpress_ca9x4_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+        ## Patch for bootcmd
+        ###########################################################
+        sed -i "s/run distro_bootcmd; run bootflash/load mmc 0:1 0x60008000 zImage;load mmc 0:1 0x61000000 device_tree.dtb;bootz 0x60008000 - 0x61000000/g" .config
+        sed -i "s/# CONFIG_USE_BOOTARGS is not set/CONFIG_USE_BOOTARGS=y/g" .config
+        sed -i "s/CONFIG_USE_BOOTARGS=n/CONFIG_USE_BOOTARGS=y/g" .config
+
+        # sed -i 's/CONFIG_BOOTARGS=""/CONFIG_BOOTARGS="root=/dev/mmcblk0p2 rw rootfstype=ext4 rootwait earlycon console=tty0 console=ttyAMA0 init=/linuxrc LOGLEVEL=8"/g' .config
+        sed -i '/CONFIG_USE_BOOTARGS/a CONFIG_BOOTARGS="root=/dev/mmcblk0p2 rw rootfstype=ext4 rootwait earlycon console=tty0 console=ttyAMA0 init=/linuxrc LOGLEVEL=8"' .config
+        ###########################################################
+        ${BUILD_PREFIX} make ARCH=${VARS_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} -j ${JOBS}; fErrControl ${FUNCNAME[0]} ${LINENO}
+        cp ${UBOOT_PATH}/u-boot ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
+    elif [ "${VARS_ARCH}" = "arm64" ]
+    then
+        ## Patch for bootcmd
+        ###########################################################
+        # BAREMETAL_CC_PREFIX=arm-none-eabi-
+        ###########################################################
+        # make ARCH=${VARS_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} qemu_arm64_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+        make CROSS_COMPILE=${BAREMETAL_CC_PREFIX} qemu_arm64_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+        ## Patch for bootcmd
+        ###########################################################
+        sed -i "s/run distro_bootcmd/load mmc 0:1 0x60008000 zImage;load mmc 0:1 0x61000000 device_tree.dtb;bootz 0x60008000 - 0x61000000/g" .config
+        sed -i "s/# CONFIG_USE_BOOTARGS is not set/CONFIG_USE_BOOTARGS=y/g" .config
+        sed -i "s/CONFIG_USE_BOOTARGS=n/CONFIG_USE_BOOTARGS=y/g" .config
+
+        # sed -i 's/CONFIG_BOOTARGS=""/CONFIG_BOOTARGS="root=/dev/mmcblk0p2 rw rootfstype=ext4 rootwait earlycon console=tty0 console=ttyAMA0 init=/linuxrc LOGLEVEL=8"/g' .config
+        sed -i '/CONFIG_USE_BOOTARGS/a CONFIG_BOOTARGS="root=/dev/mmcblk0p2 rw rootfstype=ext4 rootwait earlycon console=tty0 console=ttyAMA0 init=/linuxrc LOGLEVEL=8"' .config
+        ###########################################################
+        # ${BUILD_PREFIX} make ARCH=${VARS_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} -j ${JOBS}; fErrControl ${FUNCNAME[0]} ${LINENO}
+        ${BUILD_PREFIX} make CROSS_COMPILE=${BAREMETAL_CC_PREFIX} -j ${JOBS}; fErrControl ${FUNCNAME[0]} ${LINENO}
         cp ${UBOOT_PATH}/u-boot ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
     else
         echo Uboot not support in ${VARS_ARCH}
@@ -405,7 +434,7 @@ fRunEmulation()
     then
         fRunEmulation_kernel
         return
-    elif [ "${OPTION_EMULATION_RUNTIME}" = "uboot" ]
+    elif [ "${OPTION_EMULATION_RUNTIME}" = "uboot" ] && [ "${VARS_ARCH}" = "arm" ]
     then
         fPrintHeader "Run Qemu Uboot"
         cd ${BUILD_PATH}
@@ -420,7 +449,7 @@ fRunEmulation()
 
         qemu_cmd+=(-s)
         # qemu_cmd+=(-device e1000,netdev=eth0)
-    elif [ "${OPTION_EMULATION_RUNTIME}" = "disk" ]
+    elif [ "${OPTION_EMULATION_RUNTIME}" = "disk" ] && [ "${VARS_ARCH}" = "arm" ]
     then
         fPrintHeader "Run Qemu disk"
         cd ${BUILD_PATH}
@@ -435,15 +464,39 @@ fRunEmulation()
 
         qemu_cmd+=(-s)
         # qemu_cmd+=(-device e1000,netdev=eth0)
-        echo "This function is not done yet. Please do the following things in uboot."
-        echo "setenv bootcmd 'load mmc 0:1 0x60008000 zImage;load mmc 0:1 0x61000000 device_tree.dtb;bootz 0x60008000 - 0x61000000'"
-        echo "setenv bootargs 'root=/dev/mmcblk0p2 rw rootfstype=ext4 rootwait earlycon console=tty0 console=ttyAMA0 init=/linuxrc LOGLEVEL=8'"
-        echo "saveenv; reset"
+        # echo "This function is not done yet. Please do the following things in uboot."
+        # echo "setenv bootcmd 'load mmc 0:1 0x60008000 zImage;load mmc 0:1 0x61000000 device_tree.dtb;bootz 0x60008000 - 0x61000000'"
+        # echo "setenv bootargs 'root=/dev/mmcblk0p2 rw rootfstype=ext4 rootwait earlycon console=tty0 console=ttyAMA0 init=/linuxrc LOGLEVEL=8'"
+        # echo "saveenv; reset"
+        # printf "Press Enter to Continue."
+        # read tmp_test
+    elif [ "${OPTION_EMULATION_RUNTIME}" = "disk" ] && [ "${VARS_ARCH}" = "arm64" ]
+    then
+        fPrintHeader "Run Qemu arm64"
+        cd ${BUILD_PATH}
+        # local kernel_command="console=ttyAMA0 root=/dev/vda oops=panic panic_on_warn=1 panic=-1 ftrace_dump_on_oops=orig_cpu debug earlyprintk=serial slub_debug=UZ "
+        # kernel_command+="rdinit=/sbin/init"
+
+        local qemu_cmd=(qemu-system-aarch64)
+        qemu_cmd+=(-machine virt)
+        qemu_cmd+=(-cpu cortex-a57)
+        qemu_cmd+=(-nographic)
+        qemu_cmd+=(-smp 1)
+        qemu_cmd+=(-kernel u-boot)
+        # qemu_cmd+=(-initrd ./initramfs)
+
+        # qemu_cmd+=(-sd system.img)
+        qemu_cmd+=(-device sdhci-pci  -device sd-card,drive=mydrive -drive id=mydrive,if=none,format=raw,file=system.img)
+        # qemu_cmd+=(-drive file=system.img,format=raw,index=0,media=disk)
+        qemu_cmd+=(-m 2048)
+        echo "This function is not done yet. Emmc not support in uboot."
         printf "Press Enter to Continue."
         read tmp_test
+    else
+        echo "Unsupport Options: ${OPTION_EMULATION_RUNTIME}:${VARS_ARCH}"
     fi
-    echo "${qemu_cmd[@]} -append \"${kernel_command}\""
-    eval "${qemu_cmd[@]} -append \"${kernel_command}\""
+    echo "${qemu_cmd[@]}"
+    eval "${qemu_cmd[@]}"
 }
 fRunEmulation_kernel()
 {
@@ -482,7 +535,7 @@ fRunEmulation_kernel()
         # qemu_cmd+=(-kernel ../linux/arch/arm64/boot/Image)
         qemu_cmd+=(-kernel ./Image)
         qemu_cmd+=(-m 2048)
-        qemu_cmd+=(-net user,hostfwd=tcp::10023-:22 -net nic)
+        # qemu_cmd+=(-net user,hostfwd=tcp::10023-:22 -net nic)
 
     fi
     echo "${qemu_cmd[@]} -append \"${kernel_command}\""
