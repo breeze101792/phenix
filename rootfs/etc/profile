@@ -1,0 +1,38 @@
+# /etc/profile
+
+# Set our umask
+umask 022
+
+# Append "$1" to $PATH when not already in.
+# This function API is accessible to scripts in /etc/profile.d
+append_path () {
+    case ":$PATH:" in
+        *:"$1":*)
+            ;;
+        *)
+            PATH="${PATH:+$PATH:}$1"
+    esac
+}
+
+# Append our default paths
+append_path '/usr/local/sbin'
+append_path '/usr/local/bin'
+append_path '/usr/bin'
+
+# Force PATH to be environment
+export PATH
+
+unset -f append_path
+
+[ -z "$PS1" ] && return
+
+if [ $(id -u) -eq 0 ];
+then # you are root, set red colour prompt
+    PS1="[\u@\h][\w]# "
+else # normal
+    PS1="[\u@\h][\w]$ "
+fi
+
+alias ls='ls --color=auto --group-directories-first -X '
+alias l='ls -a --color=auto'
+alias ll='l -lh'

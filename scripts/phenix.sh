@@ -201,6 +201,7 @@ fBuildUBoot()
         sed -i "s/run distro_bootcmd; run bootflash/load mmc 0:1 0x60008000 zImage;load mmc 0:1 0x61000000 device_tree.dtb;bootz 0x60008000 - 0x61000000/g" .config
         sed -i "s/# CONFIG_USE_BOOTARGS is not set/CONFIG_USE_BOOTARGS=y/g" .config
         sed -i "s/CONFIG_USE_BOOTARGS=n/CONFIG_USE_BOOTARGS=y/g" .config
+        sed -i "s/CONFIG_BOOTDELAY=.*/CONFIG_BOOTDELAY=0/g" .config
 
         # sed -i 's/CONFIG_BOOTARGS=""/CONFIG_BOOTARGS="root=/dev/mmcblk0p2 rw rootfstype=ext4 rootwait earlycon console=tty0 console=ttyAMA0 init=/linuxrc LOGLEVEL=8"/g' .config
         sed -i '/CONFIG_USE_BOOTARGS/a CONFIG_BOOTARGS="root=/dev/mmcblk0p2 rw rootfstype=ext4 rootwait earlycon console=tty0 console=ttyAMA0 init=/linuxrc LOGLEVEL=8"' .config
@@ -220,6 +221,7 @@ fBuildUBoot()
         sed -i "s/run distro_bootcmd/load mmc 0:1 0x60008000 zImage;load mmc 0:1 0x61000000 device_tree.dtb;bootz 0x60008000 - 0x61000000/g" .config
         sed -i "s/# CONFIG_USE_BOOTARGS is not set/CONFIG_USE_BOOTARGS=y/g" .config
         sed -i "s/CONFIG_USE_BOOTARGS=n/CONFIG_USE_BOOTARGS=y/g" .config
+        sed -i "s/CONFIG_BOOTDELAY=.*/CONFIG_BOOTDELAY=0/g" .config
 
         # sed -i 's/CONFIG_BOOTARGS=""/CONFIG_BOOTARGS="root=/dev/mmcblk0p2 rw rootfstype=ext4 rootwait earlycon console=tty0 console=ttyAMA0 init=/linuxrc LOGLEVEL=8"/g' .config
         sed -i '/CONFIG_USE_BOOTARGS/a CONFIG_BOOTARGS="root=/dev/mmcblk0p2 rw rootfstype=ext4 rootwait earlycon console=tty0 console=ttyAMA0 init=/linuxrc LOGLEVEL=8"' .config

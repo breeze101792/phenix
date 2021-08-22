@@ -7,6 +7,11 @@ mount -vt tmpfs tmpfs /run
 mdev -s
 
 # Network
+echo $(cat /etc/hostname) > /proc/sys/kernel/hostname
 udhcpc -i eth0
 
-printf "Welcome to phenix project"
+printf "##################################################\n"
+printf "##################################################\n"
+printf "##          Welcome to phenix project           ##\n"
+printf "##################################################\n"
+printf "##################################################\n"
