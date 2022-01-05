@@ -56,8 +56,9 @@ export UBOOT_PATH=${ROOT_PATH}/u-boot
 export KERNEL_PATH=${ROOT_PATH}/linux
 export BUSYBOX_PATH=${ROOT_PATH}/busybox
 
-export BUILD_PATH=${ROOT_PATH}/build/${VARS_ARCH}
-export ROOTFS_PATH=${BUILD_PATH}/rootfs
+# will setup latter with arch select
+export BUILD_PATH=""
+export ROOTFS_PATH=""
 
 ###########################################################
 ## Functions
@@ -121,6 +122,9 @@ fInfo()
 }
 fSetupEnv()
 {
+    BUILD_PATH=${ROOT_PATH}/build/${VARS_ARCH}
+    ROOTFS_PATH=${BUILD_PATH}/rootfs
+
     if [ ${OPTION_BUILD_CLEAN} = true ]
     then
         printf "Clean Output Folder :${BUILD_PATH}"
@@ -199,6 +203,10 @@ fBuildUBoot()
 {
     fPrintHeader "Building U-Boot"
     cd ${UBOOT_PATH}
+    if [ ${OPTION_BUILD_CLEAN} = true ]
+    then
+        make clean
+    fi
     if [ "${VARS_ARCH}" = "arm" ]
     then
         ${BUILD_PREFIX} make ARCH=${VARS_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} vexpress_ca9x4_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
@@ -243,6 +251,10 @@ fBuildLinux()
 {
     fPrintHeader "Building Linux Kernel"
     cd ${KERNEL_PATH}
+    if [ ${OPTION_BUILD_CLEAN} = true ]
+    then
+        make clean
+    fi
 
     if [ ${OPTION_COPY_CONFIG} = true ]
     then
@@ -284,6 +296,10 @@ fBuildBusybox()
 {
     fPrintHeader "Building busybox"
     cd ${BUSYBOX_PATH}
+    if [ ${OPTION_BUILD_CLEAN} = true ]
+    then
+        make clean
+    fi
     if [ ${OPTION_COPY_CONFIG} = true ]
     then
         ${BUILD_PREFIX} make ARCH=${VARS_ARCH} CROSS_COMPILE=${SYSTEM_CC_PREFIX} defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
@@ -697,5 +713,4 @@ function fmain()
         fRunGDB ${DEBUG_TARGET}
     fi
 }
-
 fmain $@
