@@ -34,6 +34,7 @@ export PATH_TOOLCHAIN_LIBC=""
 export OPTION_DOWNLOAD_KERNEL=false
 export OPTION_DOWNLOAD_ROOTFS=false
 export OPTION_DOWNLOAD_UBOOT=false
+export OPTION_BUILD_CLEAN=false
 export OPTION_BUILD_UBOOT=false
 export OPTION_BUILD_KERNEL=false
 export OPTION_BUILD_ROOTFS=false
@@ -54,9 +55,10 @@ export ROOT_PATH=${PWD}
 export UBOOT_PATH=${ROOT_PATH}/u-boot
 export KERNEL_PATH=${ROOT_PATH}/linux
 export BUSYBOX_PATH=${ROOT_PATH}/busybox
-# will be Seted latter
-export BUILD_PATH=""
-export ROOTFS_PATH=""
+
+export BUILD_PATH=${ROOT_PATH}/build/${VARS_ARCH}
+export ROOTFS_PATH=${BUILD_PATH}/rootfs
+
 ###########################################################
 ## Functions
 ###########################################################
@@ -90,20 +92,21 @@ fHelp()
     printf "    %s\n" "run arm64(didn't support uboot): phenix.sh -a --arch arm64 -q kernel"
     echo "[Options]"
     printf "    %- 16s\t%s\n" "-a|--all" "Do all"
-    printf "    %- 16s\t%s\n" "--download-all" "Download all"
+    printf "    %- 16s\t%s\n" "-s|--download-all" "Download all"
     printf "    %- 16s\t%s\n" "-b|--build" "Do build"
     printf "    %- 16s\t%s\n" "-u|--uboot" "Compile uboot"
     printf "    %- 16s\t%s\n" "-l|--linux" "Compile linux"
     printf "    %- 16s\t%s\n" "-r|--rootfs" "Compile rootfs"
-    printf "    %- 16s\t%s\n" "-q|--qemu" "Run with qemu"
+    printf "    %- 16s\t%s\n" "-q|--qemu" "Run with qemu, Accept: disk, kernel, uboot. default disk."
     printf "    %- 16s\t%s\n" "-d|--debug" "enable debug"
-    echo [Config]
-    printf "    %- 16s\t%s\n" "-j|--job" "Jobs Thread"
-    printf "    %- 16s\t%s\n" "--arch" "Jobs Thread"
-    printf "    %- 16s\t%s\n" "-m|--menuconfig" "Do menuconfig"
-    printf "    %- 16s\t%s\n" "--copy-config" "Copy config file"
-    printf "    %- 16s\t%s\n" "--build-prefix" "NA"
     printf "    %- 16s\t%s\n" "-h|--help" "Help me"
+    echo [Config]
+    printf "    %- 16s\t%s\n" "-c|--clean" "Do clean build"
+    printf "    %- 16s\t%s\n" "-m|--menuconfig" "Do menuconfig"
+    printf "    %- 16s\t%s\n" "-j|--job" "Jobs Thread, default ${JOBS}"
+    printf "    %- 16s\t%s\n" "--arch" "Select arch. Accept: arm64, arm. Default ${VARS_ARCH}"
+    printf "    %- 16s\t%s\n" "--copy-config" "Copy config file"
+    printf "    %- 16s\t%s\n" "-p|--build-prefix" "Add prefix before compile command"
 }
 fInfo()
 {
@@ -118,8 +121,11 @@ fInfo()
 }
 fSetupEnv()
 {
-    BUILD_PATH=${ROOT_PATH}/build/${VARS_ARCH}
-    ROOTFS_PATH=${BUILD_PATH}/rootfs
+    if [ ${OPTION_BUILD_CLEAN} = true ]
+    then
+        printf "Clean Output Folder :${BUILD_PATH}"
+        rm -rf ${BUILD_PATH}
+    fi
 
     if [ ! -d ${BUILD_PATH} ]
     then
@@ -195,7 +201,7 @@ fBuildUBoot()
     cd ${UBOOT_PATH}
     if [ "${VARS_ARCH}" = "arm" ]
     then
-        make ARCH=${VARS_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} vexpress_ca9x4_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+        ${BUILD_PREFIX} make ARCH=${VARS_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} vexpress_ca9x4_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
         ## Patch for bootcmd
         ###########################################################
         sed -i "s/run distro_bootcmd; run bootflash/load mmc 0:1 0x60008000 zImage;load mmc 0:1 0x61000000 device_tree.dtb;bootz 0x60008000 - 0x61000000/g" .config
@@ -215,7 +221,7 @@ fBuildUBoot()
         # BAREMETAL_CC_PREFIX=arm-none-eabi-
         ###########################################################
         # make ARCH=${VARS_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} qemu_arm64_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
-        make CROSS_COMPILE=${BAREMETAL_CC_PREFIX} qemu_arm64_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+        ${BUILD_PREFIX} make CROSS_COMPILE=${BAREMETAL_CC_PREFIX} qemu_arm64_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
         ## Patch for bootcmd
         ###########################################################
         sed -i "s/run distro_bootcmd/load mmc 0:1 0x60008000 zImage;load mmc 0:1 0x61000000 device_tree.dtb;bootz 0x60008000 - 0x61000000/g" .config
@@ -243,13 +249,13 @@ fBuildLinux()
         # you can get a list of predefined configs for ARM under arch/arm/configs/
         # this configures the kernel compilation parameters
         # make ARCH=arm versatile_defconfig
-        make ARCH=${VARS_ARCH} ${VARS_KERNEL_CONFIG}; fErrControl ${FUNCNAME[0]} ${LINENO}
+        ${BUILD_PREFIX} make ARCH=${VARS_ARCH} ${VARS_KERNEL_CONFIG}; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
 
     if [ ${OPTION_ENABLE_MENUCONFIG} = true ]
     then
         # menuconfig
-        make ARCH=${VARS_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} menuconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+        ${BUILD_PREFIX} make ARCH=${VARS_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} menuconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
 
     # this compiles the kernel, add "-j <number_of_cpus>" to it to use multiple CPUs to reduce build time
@@ -280,7 +286,7 @@ fBuildBusybox()
     cd ${BUSYBOX_PATH}
     if [ ${OPTION_COPY_CONFIG} = true ]
     then
-        make ARCH=${VARS_ARCH} CROSS_COMPILE=${SYSTEM_CC_PREFIX} defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+        ${BUILD_PREFIX} make ARCH=${VARS_ARCH} CROSS_COMPILE=${SYSTEM_CC_PREFIX} defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
 
         # patch for static library
         # FIXME 
@@ -291,7 +297,7 @@ fBuildBusybox()
 
     if [ ${OPTION_ENABLE_MENUCONFIG} = true ]
     then
-        make ARCH=${VARS_ARCH} CROSS_COMPILE=${SYSTEM_CC_PREFIX} menuconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+        ${BUILD_PREFIX} make ARCH=${VARS_ARCH} CROSS_COMPILE=${SYSTEM_CC_PREFIX} menuconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
 
     if [ ${OPTION_CLEAN_BUILD} = true ]
@@ -549,6 +555,9 @@ function fmain()
     do
         case $1 in
             # Options
+            -c|--clean)
+                OPTION_BUILD_CLEAN=true
+                ;;
             -a|--all)
                 OPTION_COPY_CONFIG=true
 
@@ -562,82 +571,70 @@ function fmain()
                 OPTION_BUILD_IMAGE=true
 
                 OPTION_RUN_EMULATION=true
-                shift 1
                 ;;
-            --download-all)
+            -s|--download-all)
                 OPTION_DOWNLOAD_KERNEL=true
                 OPTION_DOWNLOAD_ROOTFS=true
                 OPTION_DOWNLOAD_UBOOT=true
-                shift 1
                 ;;
             -b|--build)
+                OPTION_BUILD_UBOOT=true
                 OPTION_BUILD_KERNEL=true
                 OPTION_BUILD_ROOTFS=true
-                OPTION_RUN_EMULATION=true
-                shift 1
+                OPTION_BUILD_IMAGE=true
                 ;;
             -u|--uboot)
                 OPTION_BUILD_UBOOT=true
-                shift 1
                 ;;
             -l|--linux)
                 OPTION_BUILD_KERNEL=true
-                shift 1
                 ;;
             -r|--rootfs)
                 OPTION_BUILD_ROOTFS=true
-                shift 1
                 ;;
             -i|--image)
                 OPTION_BUILD_IMAGE=true
-                shift 1
                 ;;
             -c|--clean)
                 OPTION_CLEAN_BUILD=true
-                shift 1
                 ;;
             -q|--qemu)
                 OPTION_RUN_EMULATION=true
                 if [ "${2}" = "kernel" ]
                 then
                     OPTION_EMULATION_RUNTIME="kernel"
-                    shift 1
                 elif [ "${2}" = "uboot" ]
                 then
                     OPTION_EMULATION_RUNTIME="uboot"
-                    shift 1
                 elif [ "${2}" = "disk" ]
                 then
                     OPTION_EMULATION_RUNTIME="disk"
-                    shift 1
                 fi
                 shift 1
                 ;;
             -d|--debug)
                 OPTION_RUN_GDB=true
                 DEBUG_TARGET=$2
-                shift 2
+                shift 1
                 ;;
             # Config
             -j|--job)
                 JOBS=$2
-                shift 2
+                shift 1
                 ;;
             --arch)
                 OPTION_ARCH=$2
-                shift 2
+                shift 1
                 ;;
             -m|--menuconfig)
                 OPTION_ENABLE_MENUCONFIG=true
-                shift 1
                 ;;
             --copy-config)
                 OPTION_COPY_CONFIG=true
-                shift 1
                 ;;
-            --build-prefix)
+            -p|--build-prefix)
                 BUILD_PREFIX=$2
-                shift 2
+                shift 1
                 ;;
             -h|--help)
                 fHelp
@@ -649,6 +646,7 @@ function fmain()
                 exit 1
                 ;;
         esac
+        shift 1
     done
 
     # Preset
