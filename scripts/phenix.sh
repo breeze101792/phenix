@@ -99,7 +99,7 @@ fHelp()
     printf "    %- 16s\t%s\n" "-l|--linux" "Compile linux"
     printf "    %- 16s\t%s\n" "-r|--rootfs" "Compile rootfs"
     printf "    %- 16s\t%s\n" "-q|--qemu" "Run with qemu, Accept: disk, kernel, uboot. default disk."
-    printf "    %- 16s\t%s\n" "-d|--debug" "enable debug"
+    printf "    %- 16s\t%s\n" "-d|--debug" "enable gdb debug. target: kernel, busybox "
     printf "    %- 16s\t%s\n" "-h|--help" "Help me"
     echo [Config]
     printf "    %- 16s\t%s\n" "-c|--clean" "Do clean build"
