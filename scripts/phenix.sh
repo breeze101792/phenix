@@ -31,19 +31,25 @@ export PATH_TOOLCHAIN_LIBC=""
 ###########################################################
 ## Options
 ###########################################################
+# download
 export OPTION_DOWNLOAD_KERNEL=false
 export OPTION_DOWNLOAD_ROOTFS=false
 export OPTION_DOWNLOAD_UBOOT=false
+# patch
+export OPTION_PATCH_UBOOT=false
+export OPTION_PATCH_LINUX=false
+export OPTION_PATCH_BUSYBOX=false
+# build
 export OPTION_BUILD_CLEAN=false
 export OPTION_BUILD_UBOOT=false
 export OPTION_BUILD_KERNEL=false
 export OPTION_BUILD_ROOTFS=false
 export OPTION_BUILD_IMAGE=false
+# run
 export OPTION_RUN_EMULATION=false
 export OPTION_RUN_GDB=false
-
-# export OPTION_ARCH=arm64
-export OPTION_ARCH=arm # arm/arm64
+# arch
+export OPTION_ARCH=arm64 # arm/arm64
 export OPTION_COPY_CONFIG=false
 export OPTION_CLEAN_BUILD=false
 export OPTION_ENABLE_MENUCONFIG=false
@@ -87,27 +93,29 @@ fErrControl()
 }
 fHelp()
 {
-    echo "phenix"
+    echo "Phenix: A tool for building and running Linux on QEMU"
     echo "[Example]"
     printf "    %s\n" "run arm(with uboot): phenix.sh -a"
-    printf "    %s\n" "run arm64(didn't support uboot): phenix.sh -a --arch arm64 -q kernel"
+    printf "    %s\n" "run arm64(without uboot): phenix.sh -a --arch arm64 -q kernel"
     echo "[Options]"
-    printf "    %- 16s\t%s\n" "-a|--all" "Do all"
-    printf "    %- 16s\t%s\n" "-s|--download-all" "Download all"
-    printf "    %- 16s\t%s\n" "-b|--build" "Do build"
+    printf "    %- 16s\t%s\n" "-a|--all" "Do all (download, patch, build, run)"
+    printf "    %- 16s\t%s\n" "-s|--download-all" "Download all source code"
+    printf "    %- 16s\t%s\n" "-P|--patch" "Patch all source code"
+    printf "    %- 16s\t%s\n" "-b|--build" "Build all (uboot, linux, rootfs, image)"
     printf "    %- 16s\t%s\n" "-u|--uboot" "Compile uboot"
     printf "    %- 16s\t%s\n" "-l|--linux" "Compile linux"
     printf "    %- 16s\t%s\n" "-r|--rootfs" "Compile rootfs"
+    printf "    %- 16s\t%s\n" "-i|--image" "Build disk image"
     printf "    %- 16s\t%s\n" "-q|--qemu" "Run with qemu, Accept: disk, kernel, uboot. default disk."
-    printf "    %- 16s\t%s\n" "-d|--debug" "enable gdb debug. target: kernel, busybox "
-    printf "    %- 16s\t%s\n" "-h|--help" "Help me"
+    printf "    %- 16s\t%s\n" "-d|--debug" "Enable gdb debug. target: kernel, busybox"
+    printf "    %- 16s\t%s\n" "-h|--help" "Show this help message"
     echo [Config]
-    printf "    %- 16s\t%s\n" "-c|--clean" "Do clean build"
-    printf "    %- 16s\t%s\n" "-m|--menuconfig" "Do menuconfig"
-    printf "    %- 16s\t%s\n" "-j|--job" "Jobs Thread, default ${JOBS}"
-    printf "    %- 16s\t%s\n" "--arch" "Select arch. Accept: arm64, arm. Default ${VARS_ARCH}"
-    printf "    %- 16s\t%s\n" "--copy-config" "Copy config file"
-    printf "    %- 16s\t%s\n" "-p|--build-prefix" "Add prefix before compile command"
+    printf "    %- 16s\t%s\n" "-c|--clean" "Do clean build (remove build folder)"
+    printf "    %- 16s\t%s\n" "-m|--menuconfig" "Run menuconfig for kernel/busybox"
+    printf "    %- 16s\t%s\n" "-j|--job" "Number of parallel jobs, default ${JOBS}"
+    printf "    %- 16s\t%s\n" "--arch" "Select architecture. Accept: arm64, arm. Default ${OPTION_ARCH}"
+    printf "    %- 16s\t%s\n" "--copy-config" "Copy default config file before build"
+    printf "    %- 16s\t%s\n" "-p|--build-prefix" "Add prefix before compile command (e.g. 'sudo')"
 }
 fInfo()
 {
@@ -199,6 +207,26 @@ fDownloadBusybox()
         git clone https://github.com/mirror/busybox.git; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
 }
+fPatchUBoot()
+{
+    fPrintHeader "Patching U-Boot"
+    cd ${UBOOT_PATH}
+}
+fPatchLinux()
+{
+    fPrintHeader "Patching Linux Kernel"
+    cd ${KERNEL_PATH}
+}
+fPatchBusybox()
+{
+    fPrintHeader "Patching busybox"
+    cd ${BUSYBOX_PATH}
+    if test -f "scripts/kconfig/lxdialog/check-lxdialog.sh"; then
+        sed -i "s/^main() {}/int main() {}/g" scripts/kconfig/lxdialog/check-lxdialog.sh
+    else
+        echo "lxdialog not found."
+    fi
+}
 fBuildUBoot()
 {
     fPrintHeader "Building U-Boot"
@@ -209,7 +237,10 @@ fBuildUBoot()
     fi
     if [ "${VARS_ARCH}" = "arm" ]
     then
-        ${BUILD_PREFIX} make ARCH=${VARS_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} vexpress_ca9x4_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+        if [ ${OPTION_COPY_CONFIG} = true ] || ! test -f .config; then
+            echo "Do defconfig"
+            ${BUILD_PREFIX} make ARCH=${VARS_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} vexpress_ca9x4_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+        fi
         ## Patch for bootcmd
         ###########################################################
         sed -i "s/run distro_bootcmd; run bootflash/load mmc 0:1 0x60008000 zImage;load mmc 0:1 0x61000000 device_tree.dtb;bootz 0x60008000 - 0x61000000/g" .config
@@ -228,19 +259,39 @@ fBuildUBoot()
         ###########################################################
         # BAREMETAL_CC_PREFIX=arm-none-eabi-
         ###########################################################
-        # make ARCH=${VARS_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} qemu_arm64_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
-        ${BUILD_PREFIX} make CROSS_COMPILE=${BAREMETAL_CC_PREFIX} qemu_arm64_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+        if [ ${OPTION_COPY_CONFIG} = true ] || ! test -f .config; then
+            echo "Do defconfig"
+            ${BUILD_PREFIX} make CROSS_COMPILE=${BAREMETAL_CC_PREFIX} qemu_arm64_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+        fi
         ## Patch for bootcmd
         ###########################################################
-        sed -i "s/run distro_bootcmd/load mmc 0:1 0x60008000 zImage;load mmc 0:1 0x61000000 device_tree.dtb;bootz 0x60008000 - 0x61000000/g" .config
+        # 1. Modify Boot Command
+        # Logic: Scan VirtIO -> Load Image to RAM (0x40080000) -> Boot (using fdt_addr passed by QEMU)
+        # Note: 0x40080000 is a safe start address for QEMU virt; the original 0x60000000 might be out of range or cause conflicts.
+        sed -i 's/CONFIG_BOOTCOMMAND=.*/CONFIG_BOOTCOMMAND="virtio scan; load virtio 0:1 0x40080000 Image; booti 0x40080000 - ${fdt_addr}"/g' .config
+
+        # If the original file uses indirect methods like "run distro_bootcmd", use this line to force override (choose one of two; the above line is generally effective, or add it to the end of the file).
+        # sed -i "s/run distro_bootcmd/virtio scan; load virtio 0:1 0x40080000 Image; booti 0x40080000 - \$\{fdt_addr\}/g" .config
+
+        # 2. Force enable BootArgs feature
         sed -i "s/# CONFIG_USE_BOOTARGS is not set/CONFIG_USE_BOOTARGS=y/g" .config
         sed -i "s/CONFIG_USE_BOOTARGS=n/CONFIG_USE_BOOTARGS=y/g" .config
+
+        # 3. Set Boot Delay to 0 (instant boot)
         sed -i "s/CONFIG_BOOTDELAY=.*/CONFIG_BOOTDELAY=0/g" .config
 
-        # sed -i 's/CONFIG_BOOTARGS=""/CONFIG_BOOTARGS="root=/dev/mmcblk0p2 rw rootfstype=ext4 rootwait earlycon console=tty0 console=ttyAMA0 init=/linuxrc LOGLEVEL=8"/g' .config
-        sed -i '/CONFIG_USE_BOOTARGS/a CONFIG_BOOTARGS="root=/dev/mmcblk0p2 rw rootfstype=ext4 rootwait earlycon console=tty0 console=ttyAMA0 init=/linuxrc LOGLEVEL=8"' .config
+        # 4. Modify BootArgs (Kernel parameters)
+        # Changes:
+        #   root=/dev/mmcblk0p2 -> root=/dev/vda1 (VirtIO disks are usually identified as vda, assuming partition 1)
+        #   console=ttyAMA0     -> This is correct (PL011)
+        #   init=/linuxrc       -> Ensure this file exists in your rootfs, otherwise change back to /sbin/init
+        sed -i '/CONFIG_USE_BOOTARGS/a CONFIG_BOOTARGS="root=/dev/vda2 rw rootfstype=ext4 rootwait earlycon console=ttyAMA0 init=/linuxrc LOGLEVEL=8"' .config
         ###########################################################
-        # ${BUILD_PREFIX} make ARCH=${VARS_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} -j ${JOBS}; fErrControl ${FUNCNAME[0]} ${LINENO}
+        if [ ${OPTION_ENABLE_MENUCONFIG} = true ]
+        then
+            # menuconfig
+            ${BUILD_PREFIX} make CROSS_COMPILE=${BAREMETAL_CC_PREFIX} -j ${JOBS} menuconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
+        fi
         ${BUILD_PREFIX} make CROSS_COMPILE=${BAREMETAL_CC_PREFIX} -j ${JOBS}; fErrControl ${FUNCNAME[0]} ${LINENO}
         cp ${UBOOT_PATH}/u-boot ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
     else
@@ -256,12 +307,13 @@ fBuildLinux()
         make clean
     fi
 
-    if [ ${OPTION_COPY_CONFIG} = true ]
-    then
+    if [ ${OPTION_COPY_CONFIG} = true ] || ! test -f .config; then
+        echo "Do defconfig"
         # you can get a list of predefined configs for ARM under arch/arm/configs/
         # this configures the kernel compilation parameters
         # make ARCH=arm versatile_defconfig
         ${BUILD_PREFIX} make ARCH=${VARS_ARCH} ${VARS_KERNEL_CONFIG}; fErrControl ${FUNCNAME[0]} ${LINENO}
+        ${BUILD_PREFIX} make ARCH=${VARS_ARCH} olddefconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
 
     if [ ${OPTION_ENABLE_MENUCONFIG} = true ]
@@ -300,8 +352,8 @@ fBuildBusybox()
     then
         make clean
     fi
-    if [ ${OPTION_COPY_CONFIG} = true ]
-    then
+    if [ ${OPTION_COPY_CONFIG} = true ] || ! test -f .config; then
+        echo "Do defconfig"
         ${BUILD_PREFIX} make ARCH=${VARS_ARCH} CROSS_COMPILE=${SYSTEM_CC_PREFIX} defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
 
         # patch for static library
@@ -318,9 +370,9 @@ fBuildBusybox()
 
     if [ ${OPTION_CLEAN_BUILD} = true ]
     then
-        ${BUILD_PREFIX} make -j ${JOBS} ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} clean; fErrControl ${FUNCNAME[0]} ${LINENO}
+        ${BUILD_PREFIX} make -j ${JOBS} ARCH=${VARS_ARCH} CROSS_COMPILE=${SYSTEM_CC_PREFIX} dist-clean; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
-    ${BUILD_PREFIX} make -j ${JOBS} ARCH=arm CROSS_COMPILE=${SYSTEM_CC_PREFIX} install; fErrControl ${FUNCNAME[0]} ${LINENO}
+    ${BUILD_PREFIX} make -j ${JOBS} ARCH=${VARS_ARCH} CROSS_COMPILE=${SYSTEM_CC_PREFIX} install; fErrControl ${FUNCNAME[0]} ${LINENO}
     cp -rf ${BUSYBOX_PATH}/_install/* ${BUILD_PATH}/rootfs/; fErrControl ${FUNCNAME[0]} ${LINENO}
 }
 fBuildRootfs_struct()
@@ -393,8 +445,8 @@ fBuildImage()
     dd if=/dev/zero of=${var_disk_name} bs=1M count=1024
 
     # create partition
-    sgdisk -n 0:0:+10M -c 0:kernel ${var_disk_name}
-    sgdisk -n 0:0:0 -c 0:rootfs ${var_disk_name}
+    sgdisk -n 1:0:+64M -t 1:ef00 -c 1:kernel ${var_disk_name}
+    sgdisk -n 2:0:0 -t 2:8300 -c 2:rootfs ${var_disk_name}
 
     # check disk info
     sgdisk -p ${var_disk_name}
@@ -405,27 +457,35 @@ fBuildImage()
     sudo partprobe ${var_ava_loop}
 
     # create file system
-    sudo mkfs.ext4 ${var_ava_loop}p1
-    sudo mkfs.ext4 ${var_ava_loop}p2
+    sudo mkfs.vfat -F 32 -n KERNEL ${var_ava_loop}p1
+    # sudo mkfs.ext4 ${var_ava_loop}p1
+    sudo mkfs.ext4 -L ROOTFS ${var_ava_loop}p2
 
     # create dirs
     mkdir -p ${var_disk_path}/${mpt_kernel}/
     mkdir -p ${var_disk_path}/${mpt_rootfs}/
 
     # mount disk
-    sudo mount -t ext4 ${var_ava_loop}p1  ${var_disk_path}/${mpt_kernel}/
+    sudo mount -t vfat ${var_ava_loop}p1  ${var_disk_path}/${mpt_kernel}/
     sudo mount -t ext4 ${var_ava_loop}p2  ${var_disk_path}/${mpt_rootfs}/
 
     # set up disk
-    sudo cp  ${BUILD_PATH}/zImage ${var_disk_path}/${mpt_kernel}/
-    # sudo cp  ${BUILD_PATH}/Image ${var_disk_path}/${mpt_kernel}/
-    sudo cp  ${BUILD_PATH}/device_tree.dtb ${var_disk_path}/${mpt_kernel}/
+    if [ "${VARS_ARCH}" = "arm64" ]; then
+        sudo cp  ${BUILD_PATH}/Image ${var_disk_path}/${mpt_kernel}/
+    elif [ "${VARS_ARCH}" = "arm" ]; then
+        sudo cp  ${BUILD_PATH}/zImage ${var_disk_path}/${mpt_kernel}/
+        sudo cp  ${BUILD_PATH}/device_tree.dtb ${var_disk_path}/${mpt_kernel}/
+    else
+        echo "Unknown arch: ${VARS_ARCH}"
+    fi
     sudo cp -rf ${ROOTFS_PATH}/* ${var_disk_path}/${mpt_rootfs}/
 
     # list content
     tree ${var_disk_path}/${mpt_kernel}/
     tree ${var_disk_path}/${mpt_rootfs}/
 
+    sync
+    sync
     # deallocate resource
     sudo umount ${var_disk_path}/${mpt_kernel}/
     sudo umount ${var_disk_path}/${mpt_rootfs}/
@@ -495,6 +555,31 @@ fRunEmulation()
         # printf "Press Enter to Continue."
         # read tmp_test
     elif [ "${OPTION_EMULATION_RUNTIME}" = "disk" ] && [ "${VARS_ARCH}" = "arm64" ]
+    then
+        fPrintHeader "Run Qemu arm64"
+        cd ${BUILD_PATH}
+
+        # Create QEMU command array
+        local qemu_cmd=(qemu-system-aarch64)
+        qemu_cmd+=(-machine virt)
+        qemu_cmd+=(-cpu cortex-a57)
+        qemu_cmd+=(-nographic)
+        qemu_cmd+=(-smp 1)
+        qemu_cmd+=(-m 2048)
+
+        # Load U-Boot
+        qemu_cmd+=(-kernel u-boot)
+
+        # Use VirtIO to mount system.img ---
+        # This will simulate system.img as a VirtIO disk, which U-Boot identifies as "virtio 0"
+        qemu_cmd+=(-drive if=none,file=system.img,format=raw,id=hd0)
+        qemu_cmd+=(-device virtio-blk-device,drive=hd0)
+        # -------------------------------------------
+
+        # (Optional) Add VirtIO network card for future tftp experiments
+        qemu_cmd+=(-device virtio-net-device,netdev=net0)
+        qemu_cmd+=(-netdev user,id=net0)
+    elif [ "${OPTION_EMULATION_RUNTIME}" = "disk" ] && [ "${VARS_ARCH}" = "arm64old" ]
     then
         fPrintHeader "Run Qemu arm64"
         cd ${BUILD_PATH}
@@ -581,6 +666,10 @@ function fmain()
                 OPTION_DOWNLOAD_ROOTFS=true
                 OPTION_DOWNLOAD_UBOOT=true
 
+                OPTION_PATCH_UBOOT=true
+                OPTION_PATCH_LINUX=true
+                OPTION_PATCH_BUSYBOX=true
+
                 OPTION_BUILD_UBOOT=true
                 OPTION_BUILD_KERNEL=true
                 OPTION_BUILD_ROOTFS=true
@@ -592,6 +681,11 @@ function fmain()
                 OPTION_DOWNLOAD_KERNEL=true
                 OPTION_DOWNLOAD_ROOTFS=true
                 OPTION_DOWNLOAD_UBOOT=true
+                ;;
+            -P|--patch)
+                OPTION_PATCH_UBOOT=true
+                OPTION_PATCH_LINUX=true
+                OPTION_PATCH_BUSYBOX=true
                 ;;
             -b|--build)
                 OPTION_BUILD_UBOOT=true
@@ -685,6 +779,20 @@ function fmain()
     if [ ${OPTION_DOWNLOAD_UBOOT} = true ]
     then
         fDownloadBusybox
+    fi
+
+    ## patch
+    if [ ${OPTION_PATCH_UBOOT} = true ]
+    then
+        fPatchUBoot
+    fi
+    if [ ${OPTION_PATCH_LINUX} = true ]
+    then
+        fPatchLinux
+    fi
+    if [ ${OPTION_PATCH_BUSYBOX} = true ]
+    then
+        fPatchBusybox
     fi
 
     ## build
