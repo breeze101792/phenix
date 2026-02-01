@@ -14,7 +14,7 @@ export VARS_ARCH=""
 export VARS_KERNEL_CONFIG=""
 export SYSTEM_CC_PREFIX=""
 export BAREMETAL_CC_PREFIX=""
-export PATH_TOOLCHAIN_LIBC=""
+# export PATH_TOOLCHAIN_LIBC=""
 # arm 64
 # export PATH=/mnt/storage/workspace/tools/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu/bin:$PATH
 # export VARS_ARCH=arm64
@@ -48,17 +48,23 @@ export OPTION_BUILD_IMAGE=false
 # run
 export OPTION_RUN_EMULATION=false
 export OPTION_RUN_GDB=false
-# arch
-export OPTION_ARCH=arm64 # arm/arm64
-export OPTION_COPY_CONFIG=false
-export OPTION_CLEAN_BUILD=false
-export OPTION_ENABLE_MENUCONFIG=false
 export OPTION_EMULATION_RUNTIME="disk" # kernel/uboot//disk
-export OPTION_STATIC_BUSYBOX=false
+export OPTION_ENABLE_DEBUG=false
+###########################################################
+## Build Options
+###########################################################
+export BUILD_ENABLE_TFA=true
+export BUILD_STATIC_BUSYBOX=false
+# arch
+export BUILD_ARCH=arm64 # arm/arm64
+export BUILD_COPY_CONFIG=false
+export BUILD_CLEAN_BUILD=false
+export BUILD_ENABLE_MENUCONFIG=false
 ###########################################################
 ## Path
 ###########################################################
 export ROOT_PATH=${PWD}
+export TFA_PATH=${ROOT_PATH}/tfa
 export UBOOT_PATH=${ROOT_PATH}/u-boot
 export KERNEL_PATH=${ROOT_PATH}/linux
 export BUSYBOX_PATH=${ROOT_PATH}/busybox
@@ -115,7 +121,7 @@ fHelp()
     printf "    %- 16s\t%s\n" "-c|--clean" "Do clean build (remove build folder)"
     printf "    %- 16s\t%s\n" "-m|--menuconfig" "Run menuconfig for kernel/busybox"
     printf "    %- 16s\t%s\n" "-j|--job" "Number of parallel jobs, default ${JOBS}"
-    printf "    %- 16s\t%s\n" "--arch" "Select architecture. Accept: arm64, arm. Default ${OPTION_ARCH}"
+    printf "    %- 16s\t%s\n" "--arch" "Select architecture. Accept: arm64, arm. Default ${BUILD_ARCH}"
     printf "    %- 16s\t%s\n" "--copy-config" "Copy default config file before build"
     printf "    %- 16s\t%s\n" "-p|--build-prefix" "Add prefix before compile command (e.g. 'sudo')"
 }
@@ -172,6 +178,8 @@ fSelectArch()
             VARS_KERNEL_CONFIG=vexpress_defconfig
             SYSTEM_CC_PREFIX=arm-linux-gnueabihf-
             BAREMETAL_CC_PREFIX=arm-none-eabi-
+            # patch disable on arm.
+            BUILD_ENABLE_TFA=false
             ;;
         arm64)
             echo "ARM 64"
@@ -192,6 +200,12 @@ fDownloadUBoot()
         echo "Skip UBoot download."
     else
         git clone https://github.com/u-boot/u-boot.git; fErrControl ${FUNCNAME[0]} ${LINENO}
+    fi
+    if [ -d ${TFA_PATH} ]
+    then
+        echo "Skip Trusted-Firmware-A download."
+    else
+        git clone https://github.com/ARM-software/arm-trusted-firmware.git ${TFA_PATH}; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
 }
 fDownloadLinux()
@@ -236,6 +250,50 @@ fPatchBusybox()
         echo "lxdialog not found."
     fi
 }
+fBuildUBoot_TFA()
+{
+    fPrintHeader "Building TFA"
+    local var_uboot_bin=${UBOOT_PATH}/u-boot.bin
+    local var_plat="qemu"
+
+    cd ${TFA_PATH}
+    if [ ${OPTION_BUILD_CLEAN} = true ]
+    then
+        make clean
+    fi
+    if ! test -f "${var_uboot_bin}"; then
+        echo "Uboot not found, can not generate fip image."
+        exit 1
+    fi
+    # --- 4. Build TF-A ---
+    # PLAT=qemu : Specify target as QEMU virt
+    # BL33=...  : Pack U-Boot into FIP
+    # DEBUG=1   : Enable logging to see output from BL1/BL2/BL31
+    echo ${BUILD_PREFIX} make CROSS_COMPILE=${BAREMETAL_CC_PREFIX} \
+        PLAT=${var_plat} \
+        BL33=${var_uboot_bin} \
+        DEBUG=1 \
+        LOG_LEVEL=40 \
+        all fip; fErrControl ${FUNCNAME[0]} ${LINENO}
+    ${BUILD_PREFIX} make CROSS_COMPILE=${BAREMETAL_CC_PREFIX} \
+        PLAT=${var_plat} \
+        BL33=${var_uboot_bin} \
+        DEBUG=1 \
+        LOG_LEVEL=40 \
+        all fip; fErrControl ${FUNCNAME[0]} ${LINENO}
+
+    # --- 5. Copy artifacts ---
+    # These are the two key files to provide to QEMU
+    cp build/${var_plat}/debug/bl1.bin ${BUILD_PATH}/
+    cp build/${var_plat}/debug/fip.bin ${BUILD_PATH}/
+
+    echo "========================================"
+    echo "TF-A Build Complete!"
+    echo "Files are in: ${OUTPUT_DIR}"
+    echo "Use bl1.bin as -bios"
+    echo "Use fip.bin as loader device"
+    echo "========================================"
+}
 fBuildUBoot()
 {
     fPrintHeader "Building U-Boot"
@@ -246,7 +304,7 @@ fBuildUBoot()
     fi
     if [ "${VARS_ARCH}" = "arm" ]
     then
-        if [ ${OPTION_COPY_CONFIG} = true ] || ! test -f .config; then
+        if [ ${BUILD_COPY_CONFIG} = true ] || ! test -f .config; then
             echo "Do defconfig"
             ${BUILD_PREFIX} make ARCH=${VARS_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} vexpress_ca9x4_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
         fi
@@ -268,7 +326,7 @@ fBuildUBoot()
         ###########################################################
         # BAREMETAL_CC_PREFIX=arm-none-eabi-
         ###########################################################
-        if [ ${OPTION_COPY_CONFIG} = true ] || ! test -f .config; then
+        if [ ${BUILD_COPY_CONFIG} = true ] || ! test -f .config; then
             echo "Do defconfig"
             ${BUILD_PREFIX} make CROSS_COMPILE=${BAREMETAL_CC_PREFIX} qemu_arm64_defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
         fi
@@ -295,8 +353,12 @@ fBuildUBoot()
         #   console=ttyAMA0     -> This is correct (PL011)
         #   init=/linuxrc       -> Ensure this file exists in your rootfs, otherwise change back to /sbin/init
         sed -i '/CONFIG_USE_BOOTARGS/a CONFIG_BOOTARGS="root=/dev/vda2 rw rootfstype=ext4 rootwait earlycon console=ttyAMA0 init=/linuxrc LOGLEVEL=8"' .config
+
+        if [ "${BUILD_ENABLE_TFA}" = "true" ]; then
+            sed -i 's/CONFIG_SYS_TEXT_BASE=0x00000000/CONFIG_SYS_TEXT_BASE=0x60000000/g' .config
+        fi
         ###########################################################
-        if [ ${OPTION_ENABLE_MENUCONFIG} = true ]
+        if [ ${BUILD_ENABLE_MENUCONFIG} = true ]
         then
             # menuconfig
             ${BUILD_PREFIX} make CROSS_COMPILE=${BAREMETAL_CC_PREFIX} -j ${JOBS} menuconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
@@ -316,23 +378,24 @@ fBuildLinux()
         make clean
     fi
 
-    if [ ${OPTION_COPY_CONFIG} = true ] || ! test -f .config; then
+    if [ ${BUILD_COPY_CONFIG} = true ] || ! test -f .config; then
         echo "Do defconfig"
         # you can get a list of predefined configs for ARM under arch/arm/configs/
         # this configures the kernel compilation parameters
         # make ARCH=arm versatile_defconfig
         ${BUILD_PREFIX} make ARCH=${VARS_ARCH} ${VARS_KERNEL_CONFIG}; fErrControl ${FUNCNAME[0]} ${LINENO}
+        # set new config to default.
         ${BUILD_PREFIX} make ARCH=${VARS_ARCH} olddefconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
 
-    if [ ${OPTION_ENABLE_MENUCONFIG} = true ]
+    if [ ${BUILD_ENABLE_MENUCONFIG} = true ]
     then
         # menuconfig
         ${BUILD_PREFIX} make ARCH=${VARS_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} menuconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
 
     # this compiles the kernel, add "-j <number_of_cpus>" to it to use multiple CPUs to reduce build time
-    if [ ${OPTION_CLEAN_BUILD} = true ]
+    if [ ${BUILD_CLEAN_BUILD} = true ]
     then
         ${BUILD_PREFIX} make -j ${JOBS} ARCH=${VARS_ARCH} CROSS_COMPILE=${BAREMETAL_CC_PREFIX} clean; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
@@ -361,7 +424,7 @@ fBuildBusybox()
     then
         make clean
     fi
-    if [ ${OPTION_COPY_CONFIG} = true ] || ! test -f .config; then
+    if [ ${BUILD_COPY_CONFIG} = true ] || ! test -f .config; then
         echo "Do defconfig"
         ${BUILD_PREFIX} make ARCH=${VARS_ARCH} CROSS_COMPILE=${SYSTEM_CC_PREFIX} defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
 
@@ -369,18 +432,18 @@ fBuildBusybox()
         sed -i "s/CONFIG_TC=y/# CONFIG_TC is not set/g" .config
     fi
 
-    if [ ${OPTION_STATIC_BUSYBOX} = true ]; then
+    if [ ${BUILD_STATIC_BUSYBOX} = true ]; then
         # echo "Please do Busybox Settings –> Build Options."
         echo "Use static busybox on bring up stage."
         sed -i "s/# CONFIG_STATIC is not set/CONFIG_STATIC=y/g" .config
     fi
 
-    if [ ${OPTION_ENABLE_MENUCONFIG} = true ]
+    if [ ${BUILD_ENABLE_MENUCONFIG} = true ]
     then
         ${BUILD_PREFIX} make ARCH=${VARS_ARCH} CROSS_COMPILE=${SYSTEM_CC_PREFIX} menuconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
 
-    if [ ${OPTION_CLEAN_BUILD} = true ]
+    if [ ${BUILD_CLEAN_BUILD} = true ]
     then
         ${BUILD_PREFIX} make -j ${JOBS} ARCH=${VARS_ARCH} CROSS_COMPILE=${SYSTEM_CC_PREFIX} dist-clean; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
@@ -487,6 +550,31 @@ fBuildRootfs()
         # cp -f initramfs ${BUILD_PATH}/
     fi
 }
+fBuildImage_tfa()
+{
+    fPrintHeader "Build TFA Image"
+    local FLASH_BIN="${BUILD_PATH}/flash.bin"
+    cd ${BUILD_PATH}
+    # 1. Create a 64MB empty file (all zeros)
+    # /dev/zero is a zero generator, bs=1M count=64 means generating 64MB
+    dd if=/dev/zero of=${FLASH_BIN} bs=1M count=64; fErrControl ${FUNCNAME[0]} ${LINENO}
+
+    # 2. Flash BL1 to the beginning (Address 0x00000000)
+    # conv=notrunc means "do not truncate the file", only overwrite the beginning part
+    dd if=${BUILD_PATH}/bl1.bin of=${FLASH_BIN} conv=notrunc; fErrControl ${FUNCNAME[0]} ${LINENO}
+
+    # 3. Flash FIP to 0x00040000 (at 256KB)
+    # seek=64 means skip 64 blocks (bs=4096), which is 64 * 4KB = 256KB
+    # This is the default location where the TF-A QEMU platform looks for FIP
+    dd if=${BUILD_PATH}/fip.bin of=${FLASH_BIN} bs=4096 seek=64 conv=notrunc; fErrControl ${FUNCNAME[0]} ${LINENO}
+
+    echo "========================================"
+    echo "Flash Image Generated: ${FLASH_BIN}"
+    echo "Layout:"
+    echo "  0x00000000 - bl1.bin (Boot ROM)"
+    echo "  0x00040000 - fip.bin (BL2 + BL31 + U-Boot)"
+    echo "========================================"
+}
 fBuildImage()
 {
     fPrintHeader "Build Image"
@@ -568,16 +656,20 @@ fBuildImage()
 fRunGDB()
 {
     case $1 in
+        uboot)
+            cd ${UBOOT_PATH}
+            ${SYSTEM_CC_PREFIX}gdb u-boot; fErrControl ${FUNCNAME[0]} ${LINENO}
+            ;;
         kernel)
             # kernel dbg
             cd ${KERNEL_PATH}
-            arm-linux-gnueabihf-gdb vmlinux; fErrControl ${FUNCNAME[0]} ${LINENO}
+            ${SYSTEM_CC_PREFIX}gdb vmlinux; fErrControl ${FUNCNAME[0]} ${LINENO}
             # connect to target with gdb
             # target remote localhost:9000
             ;;
         busybox)
             cd ${BUSYBOX_PATH}
-            arm-linux-gnueabihf-gdb busybox_unstripped; fErrControl ${FUNCNAME[0]} ${LINENO}
+            ${SYSTEM_CC_PREFIX}gdb busybox_unstripped; fErrControl ${FUNCNAME[0]} ${LINENO}
             ;;
         *)
             echo "Wrong target $1"
@@ -635,14 +727,23 @@ fRunEmulation()
 
         # Create QEMU command array
         local qemu_cmd=(qemu-system-aarch64)
-        qemu_cmd+=(-machine virt)
         qemu_cmd+=(-cpu cortex-a57)
         qemu_cmd+=(-nographic)
         qemu_cmd+=(-smp 1)
         qemu_cmd+=(-m 2048)
 
-        # Load U-Boot
-        qemu_cmd+=(-kernel u-boot)
+        if [ ${BUILD_ENABLE_TFA} = true ]
+        then
+            qemu_cmd+=(-machine virt,secure=on)
+            # Load U-Boot
+            # qemu_cmd+=(-bios ${BUILD_PATH}/bl1.bin)
+            # qemu_cmd+=(-device loader,file=${BUILD_PATH}/fip.bin,addr=0x00040000)
+            qemu_cmd+=(-drive if=pflash,format=raw,file=flash.bin,readonly=on)
+        else
+            qemu_cmd+=(-machine virt)
+            # Load U-Boot
+            qemu_cmd+=(-kernel u-boot)
+        fi
 
         # Use VirtIO to mount system.img ---
         # This will simulate system.img as a VirtIO disk, which U-Boot identifies as "virtio 0"
@@ -677,6 +778,11 @@ fRunEmulation()
         read tmp_test
     else
         echo "Unsupport Options: ${OPTION_EMULATION_RUNTIME}:${VARS_ARCH}"
+    fi
+    if [ ${OPTION_ENABLE_DEBUG} = true ]
+    then
+        # default stop running, you could set break point at the start.
+        qemu_cmd+=(-s -S)
     fi
     echo "${qemu_cmd[@]}"
     eval "${qemu_cmd[@]}"
@@ -734,7 +840,7 @@ function fmain()
                 OPTION_BUILD_CLEAN=true
                 ;;
             -a|--all)
-                # OPTION_COPY_CONFIG=true
+                # BUILD_COPY_CONFIG=true
 
                 OPTION_DOWNLOAD_KERNEL=true
                 OPTION_DOWNLOAD_ROOTFS=true
@@ -780,23 +886,28 @@ function fmain()
                 OPTION_BUILD_IMAGE=true
                 ;;
             -c|--clean)
-                OPTION_CLEAN_BUILD=true
+                BUILD_CLEAN_BUILD=true
                 ;;
             -q|--qemu)
                 OPTION_RUN_EMULATION=true
                 if [ "${2}" = "kernel" ]
                 then
                     OPTION_EMULATION_RUNTIME="kernel"
+                    shift 1
                 elif [ "${2}" = "uboot" ]
                 then
                     OPTION_EMULATION_RUNTIME="uboot"
+                    shift 1
                 elif [ "${2}" = "disk" ]
                 then
                     OPTION_EMULATION_RUNTIME="disk"
+                    shift 1
                 fi
-                shift 1
                 ;;
             -d|--debug)
+                OPTION_ENABLE_DEBUG=true
+                ;;
+            -g|--gdb)
                 OPTION_RUN_GDB=true
                 DEBUG_TARGET=$2
                 shift 1
@@ -807,14 +918,14 @@ function fmain()
                 shift 1
                 ;;
             --arch)
-                OPTION_ARCH=$2
+                BUILD_ARCH=$2
                 shift 1
                 ;;
             -m|--menuconfig)
-                OPTION_ENABLE_MENUCONFIG=true
+                BUILD_ENABLE_MENUCONFIG=true
                 ;;
             --copy-config)
-                OPTION_COPY_CONFIG=true
+                BUILD_COPY_CONFIG=true
                 ;;
             -p|--build-prefix)
                 BUILD_PREFIX=$2
@@ -834,7 +945,7 @@ function fmain()
     done
 
     # Preset
-    fSelectArch ${OPTION_ARCH}
+    fSelectArch ${BUILD_ARCH}
 
     # Post settings
     fSetupEnv
@@ -842,15 +953,15 @@ function fmain()
     fInfo
 
     ## Download
-    if [ ${OPTION_DOWNLOAD_KERNEL} = true ]
+    if [ ${OPTION_DOWNLOAD_UBOOT} = true ]
     then
         fDownloadUBoot
     fi
-    if [ ${OPTION_DOWNLOAD_ROOTFS} = true ]
+    if [ ${OPTION_DOWNLOAD_KERNEL} = true ]
     then
         fDownloadLinux
     fi
-    if [ ${OPTION_DOWNLOAD_UBOOT} = true ]
+    if [ ${OPTION_DOWNLOAD_ROOTFS} = true ]
     then
         fDownloadBusybox
     fi
@@ -873,6 +984,9 @@ function fmain()
     if [ ${OPTION_BUILD_UBOOT} = true ]
     then
         fBuildUBoot
+        if [ "${BUILD_ENABLE_TFA}" = "true" ]; then
+            fBuildUBoot_TFA
+        fi
     fi
     if [ ${OPTION_BUILD_KERNEL} = true ]
     then
@@ -885,6 +999,9 @@ function fmain()
     if [ ${OPTION_BUILD_IMAGE} = true ]
     then
         fBuildImage
+        if [ "${BUILD_ENABLE_TFA}" = "true" ]; then
+            fBuildImage_tfa
+        fi
     fi
     if [ ${OPTION_RUN_EMULATION} = true ]
     then
