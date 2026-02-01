@@ -422,9 +422,9 @@ fBuildRootfs_libc()
     local target_lib_dir="${target_rootfs}/lib"
     
     # 1. Determine which compiler to use for querying
-    # If CROSS_COMPILE has a value (e.g., aarch64-linux-gnu-), use it
+    # If SYSTEM_CC_PREFIX has a value (e.g., aarch64-linux-gnu-), use it
     # If it's empty (native compilation on ARM64), use gcc directly
-    local cc_cmd="${CROSS_COMPILE}gcc"
+    local cc_cmd="${SYSTEM_CC_PREFIX}gcc"
 
     echo "Fetching libs using: ${cc_cmd}"
 
