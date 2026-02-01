@@ -65,6 +65,7 @@ export BUSYBOX_PATH=${ROOT_PATH}/busybox
 # will setup latter with arch select
 export BUILD_PATH=""
 export ROOTFS_PATH=""
+export BOOTFS_PATH=""
 
 ###########################################################
 ## Functions
@@ -125,6 +126,7 @@ fInfo()
     printf "##  %s\t: %s\n" "Arch" "${VARS_ARCH}"
     printf "##  %s\t: %s\n" "BUILD_PATH" "${BUILD_PATH}"
     printf "##  %s\t: %s\n" "ROOTFS_PATH" "${ROOTFS_PATH}"
+    printf "##  %s\t: %s\n" "BOOTFS_PATH" "${BOOTFS_PATH}"
     printf "###########################################################\n"
 
 }
@@ -132,6 +134,7 @@ fSetupEnv()
 {
     BUILD_PATH=${ROOT_PATH}/build/${VARS_ARCH}
     ROOTFS_PATH=${BUILD_PATH}/rootfs
+    BOOTFS_PATH=${BUILD_PATH}/bootfs
 
     if [ ${OPTION_BUILD_CLEAN} = true ]
     then
@@ -143,14 +146,19 @@ fSetupEnv()
     then
         mkdir -p ${BUILD_PATH}
     fi
-    if [ ! -d ${BUILD_PATH}/rootfs ]
+    if [ ! -d ${ROOTFS_PATH} ]
     then
-        mkdir -p ${BUILD_PATH}/rootfs
+        mkdir -p ${ROOTFS_PATH}
+    fi
+    if [ ! -d ${BOOTFS_PATH} ]
+    then
+        mkdir -p ${BOOTFS_PATH}
     fi
     cd ${BUILD_PATH}
-    if [ ! -f disk.img ]
+    if [ ! -f data.img ]
     then
-        qemu-img create -f qcow2 disk.img 4G
+        # this is for data image.
+        qemu-img create -f qcow2 data.img 4G
     fi
 }
 fSelectArch()
@@ -334,14 +342,14 @@ fBuildLinux()
     # update files
     if [ ${VARS_ARCH} = "arm" ]
     then
-        cp -f ${KERNEL_PATH}/arch/arm/boot/Image ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
-        cp -f ${KERNEL_PATH}/arch/arm/boot/zImage ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
-        # cp -f ${KERNEL_PATH}/arch/arm/boot/uImage ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
-        # cp -f ${KERNEL_PATH}/arch/arm/boot/dts/versatile-pb.dtb ${BUILD_PATH}/device_tree.dtb
-        cp -f ${KERNEL_PATH}/arch/arm/boot/dts/vexpress-v2p-ca9.dtb ${BUILD_PATH}/device_tree.dtb; fErrControl ${FUNCNAME[0]} ${LINENO}
+        cp -f ${KERNEL_PATH}/arch/arm/boot/Image ${BOOTFS_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
+        cp -f ${KERNEL_PATH}/arch/arm/boot/zImage ${BOOTFS_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
+        # cp -f ${KERNEL_PATH}/arch/arm/boot/uImage ${BOOTFS_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
+        # cp -f ${KERNEL_PATH}/arch/arm/boot/dts/versatile-pb.dtb ${BOOTFS_PATH}/device_tree.dtb
+        cp -f ${KERNEL_PATH}/arch/arm/boot/dts/vexpress-v2p-ca9.dtb ${BOOTFS_PATH}/device_tree.dtb; fErrControl ${FUNCNAME[0]} ${LINENO}
     elif [ ${VARS_ARCH} = "arm64" ]
     then
-        cp -f ${KERNEL_PATH}/arch/arm64/boot/Image ${BUILD_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
+        cp -f ${KERNEL_PATH}/arch/arm64/boot/Image ${BOOTFS_PATH}/; fErrControl ${FUNCNAME[0]} ${LINENO}
     fi
 }
 fBuildBusybox()
@@ -357,10 +365,12 @@ fBuildBusybox()
         ${BUILD_PREFIX} make ARCH=${VARS_ARCH} CROSS_COMPILE=${SYSTEM_CC_PREFIX} defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
 
         # patch for static library
-        # FIXME 
-        echo "Please do Busybox Settings –> Build Options. If you don't have libc library"
-        echo "Patch for ARM"
-        sed -i "s/# CONFIG_STATIC is not set/CONFIG_STATIC=y/g" .config
+        # echo "Please do Busybox Settings –> Build Options. If you don't have libc library"
+        # echo "Patch for ARM"
+        # sed -i "s/# CONFIG_STATIC is not set/CONFIG_STATIC=y/g" .config
+
+        # TODO, remove me, it's just avoid compile fail.
+        sed -i "s/CONFIG_TC=y/# CONFIG_TC is not set/g" .config
     fi
 
     if [ ${OPTION_ENABLE_MENUCONFIG} = true ]
@@ -403,10 +413,54 @@ fBuildRootfs_struct()
 }
 fBuildRootfs_libc()
 {
-    if [ "${PATH_TOOLCHAIN_LIBC}" != "" ] && [ -d "${PATH_TOOLCHAIN_LIBC}" ]
-    then
-        cp -rf ${PATH_TOOLCHAIN_LIBC}/* ${ROOTFS_PATH}; fErrControl ${FUNCNAME[0]} ${LINENO}
-    fi
+    # if [ "${PATH_TOOLCHAIN_LIBC}" != "" ] && [ -d "${PATH_TOOLCHAIN_LIBC}" ]
+    # then
+    #     cp -rf ${PATH_TOOLCHAIN_LIBC}/* ${ROOTFS_PATH}; fErrControl ${FUNCNAME[0]} ${LINENO}
+    # fi
+
+    local target_rootfs=${ROOTFS_PATH}
+    local target_lib_dir="${target_rootfs}/lib"
+    
+    # 1. Determine which compiler to use for querying
+    # If CROSS_COMPILE has a value (e.g., aarch64-linux-gnu-), use it
+    # If it's empty (native compilation on ARM64), use gcc directly
+    local cc_cmd="${CROSS_COMPILE}gcc"
+
+    echo "Fetching libs using: ${cc_cmd}"
+
+    # 2. Define the core library list (these are the minimum requirements for BusyBox and basic C programs to run)
+    # ld-linux is the dynamic linker, absolutely required
+    # libc, libm are standard libraries
+    # libdl, libpthread, librt are common dependencies
+    local lib_list="ld-linux-aarch64.so.1 libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 libresolv.so.2"
+
+    mkdir -p ${target_lib_dir}
+
+    for lib in ${lib_list}; do
+        # 3. Ask GCC where this library is located
+        # -print-file-name returns the absolute path (Cross) or system path (Native)
+        local lib_path=$(${cc_cmd} -print-file-name=${lib})
+
+        # Check if it was actually found (if not found, gcc will only return the filename itself)
+        if [ "${lib_path}" = "${lib}" ]; then
+            echo "Warning: Library ${lib} not found by ${cc_cmd}!"
+            continue
+        fi
+
+        # 4. Get the directory where the file is located (since ld-linux and libc are usually in the same folder)
+        # This allows us to grab compatible files in that directory (e.g., ld-2.31.so) together
+        local src_dir=$(dirname ${lib_path})
+        
+        echo "  Installing ${lib} from ${src_dir}..."
+        # 5. Copy strategy
+        # Use cp -a (Archive) to preserve attributes and links
+        # Here we only copy files matching the name pattern to avoid copying thousands of files from the host /lib
+        # For example: copy libc.so.6 and libc-2.31.so
+        local lib_name_pattern=$(echo ${lib} | sed 's/\.so.*/.so*/') # libc.so.6 -> libc.so*
+        
+        sudo cp -a ${src_dir}/${lib_name_pattern} ${target_lib_dir}/
+    done
+    echo "Library installation complete."
 }
 fBuildRootfs()
 {
@@ -435,61 +489,79 @@ fBuildImage()
 {
     fPrintHeader "Build Image"
     local var_ava_loop=$(sudo losetup -f)
-    local var_disk_name=system.img
+    local var_disk_name=${BUILD_PATH}/system.img
     local var_disk_path=${BUILD_PATH}/disk
-    local mpt_kernel="kernel"
+    local var_bootfs_size_m=64
+    local var_rooffs_size_m=512
+    local var_disk_size_m=1024
+    local var_error=0
+
+    local mpt_bootfs="kernel"
     local mpt_rootfs="rootfs"
 
     cd ${BUILD_PATH}
+    # dynamic image size.
+    var_bootfs_size_m=$(du -sm ${BOOTFS_PATH} | awk '{print int($1 * 1.1) }' 2> /dev/null)
+    var_rooffs_size_m=$(du -sm ${ROOTFS_PATH} | awk '{print int($1 * 1.1 + 32) }' 2> /dev/null)
+
+    var_disk_size_m=$((${var_bootfs_size_m} + ${var_rooffs_size_m}))
+    echo "Create boot disk to ${var_disk_size_m}, FS: ${var_bootfs_size_m}/${var_rooffs_size_m}"
     # create image
-    dd if=/dev/zero of=${var_disk_name} bs=1M count=1024
+    dd if=/dev/zero of=${var_disk_name} bs=1M count=${var_disk_size_m}
 
     # create partition
-    sgdisk -n 1:0:+64M -t 1:ef00 -c 1:kernel ${var_disk_name}
+    sgdisk -n 1:0:+${var_bootfs_size_m}M -t 1:ef00 -c 1:kernel ${var_disk_name}
     sgdisk -n 2:0:0 -t 2:8300 -c 2:rootfs ${var_disk_name}
 
     # check disk info
-    sgdisk -p ${var_disk_name}
+    sgdisk -p ${var_disk_name}; fErrControl ${FUNCNAME[0]} ${LINENO}
 
     # mapping disk
-    sudo losetup ${var_ava_loop} ${var_disk_name}
+    sudo losetup ${var_ava_loop} ${var_disk_name}; fErrControl ${FUNCNAME[0]} ${LINENO}
     # info system about part table changed
-    sudo partprobe ${var_ava_loop}
+    sudo partprobe ${var_ava_loop}; fErrControl ${FUNCNAME[0]} ${LINENO}
 
     # create file system
+    # sudo mkfs.vfat -F 32 -n KERNEL ${var_ava_loop}p1
     sudo mkfs.vfat -F 32 -n KERNEL ${var_ava_loop}p1
-    # sudo mkfs.ext4 ${var_ava_loop}p1
-    sudo mkfs.ext4 -L ROOTFS ${var_ava_loop}p2
+    # disable journal for accurate size.
+    sudo mkfs.ext4 -O ^has_journal -L ROOTFS ${var_ava_loop}p2
 
     # create dirs
-    mkdir -p ${var_disk_path}/${mpt_kernel}/
+    mkdir -p ${var_disk_path}/${mpt_bootfs}/
     mkdir -p ${var_disk_path}/${mpt_rootfs}/
 
     # mount disk
-    sudo mount -t vfat ${var_ava_loop}p1  ${var_disk_path}/${mpt_kernel}/
+    sudo mount -t vfat ${var_ava_loop}p1  ${var_disk_path}/${mpt_bootfs}/
     sudo mount -t ext4 ${var_ava_loop}p2  ${var_disk_path}/${mpt_rootfs}/
 
     # set up disk
-    if [ "${VARS_ARCH}" = "arm64" ]; then
-        sudo cp  ${BUILD_PATH}/Image ${var_disk_path}/${mpt_kernel}/
-    elif [ "${VARS_ARCH}" = "arm" ]; then
-        sudo cp  ${BUILD_PATH}/zImage ${var_disk_path}/${mpt_kernel}/
-        sudo cp  ${BUILD_PATH}/device_tree.dtb ${var_disk_path}/${mpt_kernel}/
-    else
-        echo "Unknown arch: ${VARS_ARCH}"
-    fi
-    sudo cp -rf ${ROOTFS_PATH}/* ${var_disk_path}/${mpt_rootfs}/
+    # if [ "${VARS_ARCH}" = "arm64" ]; then
+    #     sudo cp  ${BUILD_PATH}/Image ${var_disk_path}/${mpt_bootfs}/
+    # elif [ "${VARS_ARCH}" = "arm" ]; then
+    #     sudo cp  ${BUILD_PATH}/zImage ${var_disk_path}/${mpt_bootfs}/
+    #     sudo cp  ${BUILD_PATH}/device_tree.dtb ${var_disk_path}/${mpt_bootfs}/
+    # else
+    #     echo "Unknown arch: ${VARS_ARCH}"
+    # fi
+    sudo cp -rf ${BOOTFS_PATH}/* ${var_disk_path}/${mpt_bootfs}/ || var_error=1
+    sudo cp -rf ${ROOTFS_PATH}/* ${var_disk_path}/${mpt_rootfs}/ || var_error=1
 
     # list content
-    tree ${var_disk_path}/${mpt_kernel}/
+    tree ${var_disk_path}/${mpt_bootfs}/
     tree ${var_disk_path}/${mpt_rootfs}/
 
     sync
-    sync
     # deallocate resource
-    sudo umount ${var_disk_path}/${mpt_kernel}/
+    sudo umount ${var_disk_path}/${mpt_bootfs}/
     sudo umount ${var_disk_path}/${mpt_rootfs}/
     sudo losetup -d ${var_ava_loop}
+    if [ "${var_error}" != 0 ]; then
+        echo "An erorr detect, please check the image logs."
+        exit ${var_error}
+    else
+        echo "Image create successfully."
+    fi
 }
 fRunGDB()
 {
@@ -625,7 +697,7 @@ fRunEmulation_kernel()
         qemu_cmd+=(-initrd ./initramfs)
 
         qemu_cmd+=(-s)
-        qemu_cmd+=(-hda disk.img)
+        qemu_cmd+=(-hda data.img)
         # qemu_cmd+=(-device e1000,netdev=eth0)
         # qemu_cmd+=(-s -S)
     elif [ "${VARS_ARCH}" = "arm64" ]
@@ -660,7 +732,7 @@ function fmain()
                 OPTION_BUILD_CLEAN=true
                 ;;
             -a|--all)
-                OPTION_COPY_CONFIG=true
+                # OPTION_COPY_CONFIG=true
 
                 OPTION_DOWNLOAD_KERNEL=true
                 OPTION_DOWNLOAD_ROOTFS=true
@@ -677,17 +749,17 @@ function fmain()
 
                 OPTION_RUN_EMULATION=true
                 ;;
-            -s|--download-all)
+            -s|--download-all|download)
                 OPTION_DOWNLOAD_KERNEL=true
                 OPTION_DOWNLOAD_ROOTFS=true
                 OPTION_DOWNLOAD_UBOOT=true
                 ;;
-            -P|--patch)
+            -P|--patch|patch)
                 OPTION_PATCH_UBOOT=true
                 OPTION_PATCH_LINUX=true
                 OPTION_PATCH_BUSYBOX=true
                 ;;
-            -b|--build)
+            -b|--build|build)
                 OPTION_BUILD_UBOOT=true
                 OPTION_BUILD_KERNEL=true
                 OPTION_BUILD_ROOTFS=true
