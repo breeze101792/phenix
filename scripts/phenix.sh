@@ -54,6 +54,7 @@ export OPTION_COPY_CONFIG=false
 export OPTION_CLEAN_BUILD=false
 export OPTION_ENABLE_MENUCONFIG=false
 export OPTION_EMULATION_RUNTIME="disk" # kernel/uboot//disk
+export OPTION_STATIC_BUSYBOX=false
 ###########################################################
 ## Path
 ###########################################################
@@ -364,13 +365,14 @@ fBuildBusybox()
         echo "Do defconfig"
         ${BUILD_PREFIX} make ARCH=${VARS_ARCH} CROSS_COMPILE=${SYSTEM_CC_PREFIX} defconfig; fErrControl ${FUNCNAME[0]} ${LINENO}
 
-        # patch for static library
-        # echo "Please do Busybox Settings –> Build Options. If you don't have libc library"
-        # echo "Patch for ARM"
-        # sed -i "s/# CONFIG_STATIC is not set/CONFIG_STATIC=y/g" .config
-
         # TODO, remove me, it's just avoid compile fail.
         sed -i "s/CONFIG_TC=y/# CONFIG_TC is not set/g" .config
+    fi
+
+    if [ ${OPTION_STATIC_BUSYBOX} = true ]; then
+        # echo "Please do Busybox Settings –> Build Options."
+        echo "Use static busybox on bring up stage."
+        sed -i "s/# CONFIG_STATIC is not set/CONFIG_STATIC=y/g" .config
     fi
 
     if [ ${OPTION_ENABLE_MENUCONFIG} = true ]
